@@ -169,21 +169,27 @@ export const PLANNER_STATISTICS: Readonly<Record<string, string>> = {
 /**
  * Adds the fixed statistics for indexes that have none. Rows a database
  * already has, such as ones an older build collected with ANALYZE, are kept.
+ * The server and a CLI command can open a new database at once, so the read
+ * and the insert share one write transaction: sqlite_stat1 has no unique key.
  */
 export const seedPlannerStatistics = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  // Analyzing sqlite_schema reads no user table. It creates sqlite_stat1 when
-  // missing and reloads the statistics into this connection.
-  yield* sql`ANALYZE sqlite_schema`;
-  const missing = yield* sql<{ readonly tbl: string; readonly idx: string }>`
-    SELECT tbl_name AS tbl, name AS idx FROM sqlite_schema
-    WHERE type = 'index' AND name NOT IN (SELECT idx FROM sqlite_stat1 WHERE idx IS NOT NULL)
-  `;
-  const rows = missing.flatMap(({ tbl, idx }) => {
-    const stat = PLANNER_STATISTICS[idx];
-    return stat === undefined ? [] : [{ tbl, idx, stat }];
-  });
-  if (rows.length === 0) return;
-  yield* sql`INSERT INTO sqlite_stat1 ${sql.insert(rows)}`;
-  yield* sql`ANALYZE sqlite_schema`;
+  yield* sql.withTransaction(
+    Effect.gen(function* () {
+      // Analyzing sqlite_schema reads no user table. It creates sqlite_stat1
+      // when missing and reloads the statistics into this connection.
+      yield* sql`ANALYZE sqlite_schema`;
+      const missing = yield* sql<{ readonly tbl: string; readonly idx: string }>`
+        SELECT tbl_name AS tbl, name AS idx FROM sqlite_schema
+        WHERE type = 'index' AND name NOT IN (SELECT idx FROM sqlite_stat1 WHERE idx IS NOT NULL)
+      `;
+      const rows = missing.flatMap(({ tbl, idx }) => {
+        const stat = PLANNER_STATISTICS[idx];
+        return stat === undefined ? [] : [{ tbl, idx, stat }];
+      });
+      if (rows.length === 0) return;
+      yield* sql`INSERT INTO sqlite_stat1 ${sql.insert(rows)}`;
+      yield* sql`ANALYZE sqlite_schema`;
+    }),
+  );
 }).pipe(Effect.withSpan("seedPlannerStatistics"));
