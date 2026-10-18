@@ -20,7 +20,7 @@ import { describe, expect } from "vite-plus/test";
 import { AttachmentWriteError, resolveAttachmentPathById } from "../attachmentStore.ts";
 import { type InboundDispatchInput, mentionWithContext } from "./ChannelInbound.ts";
 import {
-  CHANNEL_DOWNLOAD_PERMITS,
+  INBOUND_DOWNLOAD_PERMITS,
   downloadInboundAttachments,
 } from "./ChannelInboundAttachments.ts";
 import {
@@ -94,7 +94,7 @@ const dispatchShared = (
   },
 ) =>
   downloadInboundAttachments(
-    Semaphore.makeUnsafe(CHANNEL_DOWNLOAD_PERMITS),
+    Semaphore.makeUnsafe(INBOUND_DOWNLOAD_PERMITS),
     input.attachments,
   ).pipe(
     Effect.flatMap((attachments) =>

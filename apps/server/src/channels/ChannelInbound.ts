@@ -141,18 +141,14 @@ const contextLine = (candidate: Message): ContextLine | null => {
   if (text.trim()) append(text);
 
   const files = inboundAttachments(candidate).map((attachment) => ({
-    attachment: { ...attachment, fromContext: true } satisfies InboundChannelAttachment,
+    attachment: { ...attachment, sharedInMentionContext: true } satisfies InboundChannelAttachment,
     markerStart: append(`[shared ${attachment.name}]`),
   }));
 
   return hasBody ? { line, files } : null;
 };
 
-/**
- * Keeps the newest context lines that fit the character limit, cutting only the oldest kept
- * line from its start. A context file comes along only while its own marker is intact, so the
- * bot never gets a file the context text no longer names. Files are newest first.
- */
+/** A context file is attached only while its `[shared name]` marker survives the character limit. */
 const boundedContext = (lines: ReadonlyArray<ContextLine>) => {
   const kept: Array<{
     readonly line: string;

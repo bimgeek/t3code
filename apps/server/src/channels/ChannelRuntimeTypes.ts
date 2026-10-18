@@ -112,8 +112,7 @@ export interface InboundChannelAttachment {
   readonly sizeBytes?: number;
   readonly url?: string;
   readonly fetch?: () => Promise<Uint8Array>;
-  /** Shared in a message read as mention context rather than in the message itself. */
-  readonly fromContext?: true;
+  readonly sharedInMentionContext?: true;
 }
 
 export type DownloadedChannelFileKind =
@@ -128,11 +127,10 @@ export type DownloadedChannelFileKind =
 
 export interface DownloadedChannelFile {
   readonly name: string;
-  readonly fromContext?: true;
+  readonly sharedInMentionContext?: true;
   readonly kind: DownloadedChannelFileKind;
   readonly bytes: Uint8Array;
-  /** Hex SHA-256 of `bytes`. */
-  readonly contentHash: string;
+  readonly sha256Hex: string;
 }
 
 export interface DownloadedChannelAttachments {
@@ -240,8 +238,7 @@ export interface ChannelRuntimeContext {
   readonly runtimes: Map<string, ChannelRuntimeEntry>;
   readonly statuses: WeakMap<ChannelRuntimeEntry, Map<string, ChannelStatus>>;
   readonly withLock: KeyedLock;
-  /** Permits for inbound file downloads, shared by every bot so a burst of files stays bounded. */
-  readonly downloads: Semaphore.Semaphore;
+  readonly inboundDownloadPermits: Semaphore.Semaphore;
   /** Runs SDK callback work as a fiber of the runtime scope. */
   readonly runSdkCallback: <A, E>(effect: Effect.Effect<A, E>) => Promise<A>;
   /** Parent of every transport's own scope, such as a renewing gateway. */

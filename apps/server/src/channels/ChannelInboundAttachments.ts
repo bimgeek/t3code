@@ -25,12 +25,10 @@ import {
 
 const ATTACHMENT_NAME_MAX_CHARS = 255;
 
-/** Downloads in flight across every bot and message, for `ChannelRuntimeContext.downloads`. */
-export const CHANNEL_DOWNLOAD_PERMITS = 4;
+export const INBOUND_DOWNLOAD_PERMITS = 4;
 
 const DOWNLOAD_TIMEOUT = "30 seconds";
 
-/** Platform values can reach the bot inside a one-line note, so each is kept to one line. */
 const oneLine = (value: string | undefined) => (value ?? "").replace(/[\p{Cc}\s]+/gu, " ").trim();
 
 const cappedName = (name: string) =>
@@ -88,7 +86,7 @@ interface Note {
 
 interface SharedFile {
   readonly name: string;
-  readonly fromContext?: true;
+  readonly sharedInMentionContext?: true;
 }
 
 interface Download extends SharedFile {
@@ -97,9 +95,10 @@ interface Download extends SharedFile {
   readonly fetch: () => Promise<Uint8Array>;
 }
 
-/** A context file gets no note: its `[shared name]` marker already names it to the bot. */
 const notAttached = (file: SharedFile, reason: string): Note => ({
-  note: file.fromContext ? null : `[Shared file "${file.name}" was not attached: ${reason}]`,
+  note: file.sharedInMentionContext
+    ? null
+    : `[Shared file "${file.name}" was not attached: ${reason}]`,
 });
 
 const tooLarge = (file: SharedFile, maxBytes: number) =>
@@ -126,7 +125,7 @@ const planDownload = (inbound: InboundChannelAttachment): Note | Download => {
 
   return {
     name: inbound.name,
-    ...(inbound.fromContext ? { fromContext: true as const } : {}),
+    ...(inbound.sharedInMentionContext ? { sharedInMentionContext: true as const } : {}),
     kind: supported.kind,
     maxBytes: supported.maxBytes,
     fetch: inbound.fetch,
@@ -173,10 +172,10 @@ const download = Effect.fn("downloadChannelFile")(function* (
   return {
     file: {
       name,
-      ...(planned.fromContext ? { fromContext: true as const } : {}),
+      ...(planned.sharedInMentionContext ? { sharedInMentionContext: true as const } : {}),
       kind: planned.kind,
       bytes: bytes.value,
-      contentHash: NodeCrypto.createHash("sha256").update(bytes.value).digest("hex"),
+      sha256Hex: NodeCrypto.createHash("sha256").update(bytes.value).digest("hex"),
     },
   };
 });
@@ -203,9 +202,9 @@ export const downloadInboundAttachments = Effect.fn("downloadInboundAttachments"
 export const channelFileAttachmentId = (
   threadId: ThreadId,
   messageId: MessageId,
-  contentHash: string,
+  sha256Hex: string,
   occurrence: number,
-) => deterministicAttachmentId(threadId, `${messageId}\0${contentHash}\0${occurrence}`);
+) => deterministicAttachmentId(threadId, `${messageId}\0${sha256Hex}\0${occurrence}`);
 
 const saveFile = Effect.fn("saveChannelFile")(function* (
   ctx: ChannelRuntimeContext,
@@ -215,7 +214,7 @@ const saveFile = Effect.fn("saveChannelFile")(function* (
   occurrence: number,
 ) {
   const { name } = file;
-  const id = channelFileAttachmentId(threadId, messageId, file.contentHash, occurrence);
+  const id = channelFileAttachmentId(threadId, messageId, file.sha256Hex, occurrence);
 
   if (!id) return notAttached(file, "it could not be saved");
 
@@ -250,8 +249,8 @@ export const saveDownloadedFiles = Effect.fn("saveDownloadedFiles")(function* (
   const outcomes = yield* Effect.forEach(
     input.files,
     (file) => {
-      const occurrence = occurrences.get(file.contentHash) ?? 0;
-      occurrences.set(file.contentHash, occurrence + 1);
+      const occurrence = occurrences.get(file.sha256Hex) ?? 0;
+      occurrences.set(file.sha256Hex, occurrence + 1);
 
       return saveFile(ctx, input.threadId, input.messageId, file, occurrence);
     },

@@ -7,7 +7,7 @@ import { it } from "@effect/vitest";
 import { Message as ChatMessage } from "chat";
 import { describe, expect } from "vite-plus/test";
 import {
-  CHANNEL_DOWNLOAD_PERMITS,
+  INBOUND_DOWNLOAD_PERMITS,
   downloadInboundAttachments,
   inboundAttachments,
 } from "./ChannelInboundAttachments.ts";
@@ -24,7 +24,7 @@ describe("downloading files shared in channel messages", () => {
       const bytes = new TextEncoder().encode("plain notes");
 
       const result = yield* downloadInboundAttachments(
-        Semaphore.makeUnsafe(CHANNEL_DOWNLOAD_PERMITS),
+        Semaphore.makeUnsafe(INBOUND_DOWNLOAD_PERMITS),
         [{ name: "notes.txt", mimeType: "Text/Plain; charset=utf-8", fetch: async () => bytes }],
       );
 
@@ -34,7 +34,7 @@ describe("downloading files shared in channel messages", () => {
             name: "notes.txt",
             kind: { type: "file", mimeType: "text/plain" },
             bytes,
-            contentHash: PLAIN_NOTES_SHA256,
+            sha256Hex: PLAIN_NOTES_SHA256,
           },
         ],
         notes: [],
@@ -64,7 +64,7 @@ describe("downloading files shared in channel messages", () => {
       });
 
       const downloaded = yield* downloadInboundAttachments(
-        Semaphore.makeUnsafe(CHANNEL_DOWNLOAD_PERMITS),
+        Semaphore.makeUnsafe(INBOUND_DOWNLOAD_PERMITS),
         inboundAttachments(message),
       );
 
@@ -78,7 +78,7 @@ describe("downloading files shared in channel messages", () => {
   it.effect("counts only files it can attach toward the limit of 8", () =>
     Effect.gen(function* () {
       const result = yield* downloadInboundAttachments(
-        Semaphore.makeUnsafe(CHANNEL_DOWNLOAD_PERMITS),
+        Semaphore.makeUnsafe(INBOUND_DOWNLOAD_PERMITS),
         [
           { name: "report.zip", mimeType: "application/zip", fetch: async () => PNG_BYTES },
           ...Array.from({ length: 9 }, (_, index) => ({
@@ -102,7 +102,7 @@ describe("downloading files shared in channel messages", () => {
   it.effect("names a download that turns out larger than its declared size", () =>
     Effect.gen(function* () {
       const result = yield* downloadInboundAttachments(
-        Semaphore.makeUnsafe(CHANNEL_DOWNLOAD_PERMITS),
+        Semaphore.makeUnsafe(INBOUND_DOWNLOAD_PERMITS),
         [
           {
             name: "growing.png",
@@ -123,7 +123,7 @@ describe("downloading files shared in channel messages", () => {
   it.effect("names a file whose download does not finish within 30 seconds", () =>
     Effect.gen(function* () {
       const fiber = yield* Effect.forkChild(
-        downloadInboundAttachments(Semaphore.makeUnsafe(CHANNEL_DOWNLOAD_PERMITS), [
+        downloadInboundAttachments(Semaphore.makeUnsafe(INBOUND_DOWNLOAD_PERMITS), [
           { name: "stalled.png", mimeType: "image/png", fetch: () => new Promise(() => {}) },
           { name: "quick.png", mimeType: "image/png", fetch: async () => PNG_BYTES },
         ]),
@@ -137,7 +137,7 @@ describe("downloading files shared in channel messages", () => {
             name: "quick.png",
             kind: { type: "image", mimeType: "image/png" },
             bytes: PNG_BYTES,
-            contentHash: PNG_SHA256,
+            sha256Hex: PNG_SHA256,
           },
         ],
         notes: ['[Shared file "stalled.png" was not attached: download failed]'],
@@ -151,7 +151,7 @@ describe("downloading files shared in channel messages", () => {
 
     return Effect.gen(function* () {
       const fiber = yield* Effect.forkChild(
-        downloadInboundAttachments(Semaphore.makeUnsafe(CHANNEL_DOWNLOAD_PERMITS), [
+        downloadInboundAttachments(Semaphore.makeUnsafe(INBOUND_DOWNLOAD_PERMITS), [
           {
             name: "denied.png",
             mimeType: "image/png",
@@ -181,7 +181,7 @@ describe("downloading files shared in channel messages", () => {
 
   it.effect("runs at most four downloads at once across messages", () =>
     Effect.gen(function* () {
-      const downloads = Semaphore.makeUnsafe(CHANNEL_DOWNLOAD_PERMITS);
+      const downloads = Semaphore.makeUnsafe(INBOUND_DOWNLOAD_PERMITS);
       const release = Promise.withResolvers<void>();
       const fourStarted = Promise.withResolvers<void>();
       let started = 0;
@@ -196,7 +196,7 @@ describe("downloading files shared in channel messages", () => {
           inFlight += 1;
           mostInFlight = Math.max(mostInFlight, inFlight);
 
-          if (started === CHANNEL_DOWNLOAD_PERMITS) fourStarted.resolve();
+          if (started === INBOUND_DOWNLOAD_PERMITS) fourStarted.resolve();
           await release.promise;
           inFlight -= 1;
 
@@ -224,7 +224,7 @@ describe("downloading files shared in channel messages", () => {
         "d.png",
         "e.png",
       ]);
-      expect(mostInFlight).toBe(CHANNEL_DOWNLOAD_PERMITS);
+      expect(mostInFlight).toBe(INBOUND_DOWNLOAD_PERMITS);
     }),
   );
 });

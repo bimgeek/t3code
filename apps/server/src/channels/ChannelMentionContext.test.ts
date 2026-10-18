@@ -5,7 +5,7 @@ import * as Semaphore from "effect/Semaphore";
 import { describe, expect } from "vite-plus/test";
 import { CHANNEL_MENTION_CONTEXT_CHARACTER_LIMIT, mentionWithContext } from "./ChannelInbound.ts";
 import {
-  CHANNEL_DOWNLOAD_PERMITS,
+  INBOUND_DOWNLOAD_PERMITS,
   downloadInboundAttachments,
 } from "./ChannelInboundAttachments.ts";
 
@@ -66,7 +66,7 @@ const mentionOf = (
     );
 
     const downloaded = yield* downloadInboundAttachments(
-      Semaphore.makeUnsafe(CHANNEL_DOWNLOAD_PERMITS),
+      Semaphore.makeUnsafe(INBOUND_DOWNLOAD_PERMITS),
       inbound.attachments,
     );
 

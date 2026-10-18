@@ -196,10 +196,6 @@ export class AttachmentWriteError extends Schema.TaggedErrorClass<AttachmentWrit
   }
 }
 
-/**
- * Writes a `.part` file beside the target and renames it over the target, so a reader never sees
- * a partial file. `sweepStalePendingAttachments` removes a `.part` file left by a crash.
- */
 export const writeFileAtomically = Effect.fn("writeFileAtomically")(function* (
   filePath: string,
   bytes: Uint8Array,
@@ -242,10 +238,7 @@ export const writeAttachment = Effect.fn("writeAttachment")(function* (input: {
   return attachment;
 });
 
-/**
- * For an id derived from the bytes, where a file already at that id holds the same bytes.
- * Renaming over a file that another process has open fails on Windows.
- */
+/** Renaming over a file that another process has open fails on Windows. */
 export const writeAttachmentIfMissing = Effect.fn("writeAttachmentIfMissing")(function* (input: {
   readonly attachmentsDir: string;
   readonly attachment: AttachmentToWrite;

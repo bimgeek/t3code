@@ -19,7 +19,7 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ChannelDeliveryStore } from "./ChannelDeliveryStore.ts";
-import { CHANNEL_DOWNLOAD_PERMITS } from "./ChannelInboundAttachments.ts";
+import { INBOUND_DOWNLOAD_PERMITS } from "./ChannelInboundAttachments.ts";
 import {
   type ChannelRuntimeDependencies,
   type ChannelRuntimeContext,
@@ -72,7 +72,7 @@ const makeChannelRuntime = (deps: ChannelRuntimeDependencies) =>
       runtimes: new Map(),
       statuses: new WeakMap(),
       withLock: keyedLock(),
-      downloads: Semaphore.makeUnsafe(CHANNEL_DOWNLOAD_PERMITS),
+      inboundDownloadPermits: Semaphore.makeUnsafe(INBOUND_DOWNLOAD_PERMITS),
       runSdkCallback,
       transportScope,
       connecting: new Set(),
