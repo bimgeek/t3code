@@ -196,13 +196,30 @@ export class AttachmentWriteError extends Schema.TaggedErrorClass<AttachmentWrit
   }
 }
 
+/**
+ * Writes a `.part` file beside the target and renames it over the target, so a reader never sees
+ * a partial file. `sweepStalePendingAttachments` removes a `.part` file left by a crash.
+ */
+export const writeFileAtomically = Effect.fn("writeFileAtomically")(function* (
+  filePath: string,
+  bytes: Uint8Array,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const partPath = `${filePath}.${NodeCrypto.randomUUID()}.part`;
+
+  yield* Effect.gen(function* () {
+    yield* fileSystem.makeDirectory(path.dirname(filePath), { recursive: true });
+    yield* fileSystem.writeFile(partPath, bytes);
+    yield* fileSystem.rename(partPath, filePath);
+  }).pipe(Effect.tapError(() => fileSystem.remove(partPath, { force: true }).pipe(Effect.ignore)));
+});
+
 export const writeAttachment = Effect.fn("writeAttachment")(function* (input: {
   readonly attachmentsDir: string;
   readonly attachment: AttachmentToWrite;
   readonly bytes: Uint8Array;
 }) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
   const attachment: ChatAttachment = { ...input.attachment, sizeBytes: input.bytes.byteLength };
 
   const attachmentPath = resolveAttachmentPath({
@@ -210,22 +227,12 @@ export const writeAttachment = Effect.fn("writeAttachment")(function* (input: {
     attachment,
   });
 
-  const fail = (cause?: unknown) =>
-    new AttachmentWriteError({ attachmentId: attachment.id, cause });
-
   if (!attachmentPath) {
-    return yield* fail();
+    return yield* new AttachmentWriteError({ attachmentId: attachment.id });
   }
 
-  const partPath = `${attachmentPath}.${NodeCrypto.randomUUID()}.part`;
-
-  yield* Effect.gen(function* () {
-    yield* fileSystem.makeDirectory(path.dirname(attachmentPath), { recursive: true });
-    yield* fileSystem.writeFile(partPath, input.bytes);
-    yield* fileSystem.rename(partPath, attachmentPath);
-  }).pipe(
-    Effect.tapError(() => fileSystem.remove(partPath, { force: true }).pipe(Effect.ignore)),
-    Effect.mapError(fail),
+  yield* writeFileAtomically(attachmentPath, input.bytes).pipe(
+    Effect.mapError((cause) => new AttachmentWriteError({ attachmentId: attachment.id, cause })),
   );
 
   return attachment;
