@@ -84,7 +84,6 @@ const connectSlack = Effect.gen(function* () {
   return { harness, parse, deliver, downloads, turns };
 });
 
-/** Downloads and dispatches the way a connected transport does, around the provider lock. */
 const dispatchShared = (
   dependencies: ChannelRuntimeDependencies,
   input: Omit<InboundDispatchInput, "attachments"> & {

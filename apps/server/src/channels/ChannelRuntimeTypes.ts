@@ -129,7 +129,6 @@ export interface DownloadedChannelFile {
   readonly bytes: Uint8Array;
 }
 
-/** A message's shared files after download, with a note for each file the bot will not receive. */
 export interface DownloadedChannelAttachments {
   readonly files: ReadonlyArray<DownloadedChannelFile>;
   readonly notes: ReadonlyArray<string>;

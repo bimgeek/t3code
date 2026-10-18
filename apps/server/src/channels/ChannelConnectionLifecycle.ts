@@ -130,7 +130,6 @@ export const startChannel = (
       );
 
     // SDK callbacks are the only place work crosses into Effect; each runs in the runtime scope.
-    // Files download before the provider lock, which every bot's replies and reconnects share.
     const onInbound: InboundCallback = (message) =>
       ctx.runSdkCallback(
         downloadInboundAttachments(message.attachments).pipe(

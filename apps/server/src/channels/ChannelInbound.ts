@@ -148,7 +148,6 @@ export async function mentionWithContext(
     .join("\n")
     .slice(-CHANNEL_MENTION_CONTEXT_CHARACTER_LIMIT);
 
-  // Newest first, and only from lines the character limit keeps, whose ends hold the file markers.
   let newerCharacters = 0;
 
   const contextAttachments = context.toReversed().flatMap(({ line, attachments }) => {

@@ -217,8 +217,6 @@ export const writeAttachment = Effect.fn("writeAttachment")(function* (input: {
     return yield* fail();
   }
 
-  // Written beside the target and renamed over it, so a reader never sees a partial file when a
-  // redelivered channel message rewrites the same deterministic path. The sweep removes leftovers.
   const partPath = `${attachmentPath}.${NodeCrypto.randomUUID()}.part`;
 
   yield* Effect.gen(function* () {

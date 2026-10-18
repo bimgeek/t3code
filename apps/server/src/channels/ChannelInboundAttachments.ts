@@ -27,7 +27,6 @@ const DOWNLOAD_CONCURRENCY = 4;
 
 const DOWNLOAD_TIMEOUT = "30 seconds";
 
-// The name is quoted inside the turn text, so a line break in it would forge a line of its own.
 const oneLineName = (name: string) =>
   name
     .replace(/[\p{Cc}\s]+/gu, " ")
@@ -115,7 +114,6 @@ const planDownload = (inbound: InboundChannelAttachment): Note | Download => {
   return { name, kind: supported.kind, maxBytes: supported.maxBytes, fetch: inbound.fetch };
 };
 
-/** Files that pass the type and size rules take the slots in order; a rejected file takes none. */
 const withinLimit = (plans: ReadonlyArray<Note | Download>) => {
   let slots = 0;
 
@@ -155,7 +153,6 @@ const download = Effect.fn("downloadChannelFile")(function* (planned: Download) 
   return { file: { name, kind: planned.kind, bytes: bytes.value } };
 });
 
-/** Applies the type, size, and count rules and downloads the files that pass them. */
 export const downloadInboundAttachments = Effect.fn("downloadInboundAttachments")(function* (
   attachments: ReadonlyArray<InboundChannelAttachment>,
 ) {
@@ -180,8 +177,6 @@ const saveFile = Effect.fn("saveChannelFile")(function* (
   index: number,
 ) {
   const { name } = file;
-  // Context files can shift position when a mention is redelivered, so the key includes the content
-  // and a rewrite of an existing id always writes the same bytes.
   const contentHash = NodeCrypto.createHash("sha256").update(file.bytes).digest("hex");
   const id = deterministicAttachmentId(threadId, `${messageId}\0${index}\0${contentHash}`);
 
@@ -203,7 +198,6 @@ const saveFile = Effect.fn("saveChannelFile")(function* (
     : notAttached(name, "it could not be saved");
 });
 
-/** Stores downloaded files under ids derived from the message, so a redelivery rewrites them. */
 export const saveDownloadedFiles = Effect.fn("saveDownloadedFiles")(function* (
   ctx: ChannelRuntimeContext,
   input: {
