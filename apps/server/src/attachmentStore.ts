@@ -217,10 +217,18 @@ export const writeAttachment = Effect.fn("writeAttachment")(function* (input: {
     return yield* fail();
   }
 
-  yield* fileSystem
-    .makeDirectory(path.dirname(attachmentPath), { recursive: true })
-    .pipe(Effect.mapError(fail));
-  yield* fileSystem.writeFile(attachmentPath, input.bytes).pipe(Effect.mapError(fail));
+  // Written beside the target and renamed over it, so a reader never sees a partial file when a
+  // redelivered channel message rewrites the same deterministic path. The sweep removes leftovers.
+  const partPath = `${attachmentPath}.${NodeCrypto.randomUUID()}.part`;
+
+  yield* Effect.gen(function* () {
+    yield* fileSystem.makeDirectory(path.dirname(attachmentPath), { recursive: true });
+    yield* fileSystem.writeFile(partPath, input.bytes);
+    yield* fileSystem.rename(partPath, attachmentPath);
+  }).pipe(
+    Effect.tapError(() => fileSystem.remove(partPath, { force: true }).pipe(Effect.ignore)),
+    Effect.mapError(fail),
+  );
 
   return attachment;
 });

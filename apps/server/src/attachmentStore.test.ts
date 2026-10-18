@@ -2,7 +2,11 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { describe, expect, it } from "vite-plus/test";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import { describe, expect } from "vite-plus/test";
 
 import {
   createAttachmentId,
@@ -12,6 +16,7 @@ import {
   parseThreadSegmentFromAttachmentId,
   resolveAttachmentPathById,
   sweepStalePendingAttachments,
+  writeAttachment,
 } from "./attachmentStore.ts";
 
 describe("attachmentStore", () => {
@@ -175,4 +180,34 @@ describe("attachmentStore", () => {
       NodeFS.rmSync(attachmentsDir, { recursive: true, force: true });
     }
   });
+
+  it.effect("replaces a rewritten attachment whole and leaves no partial file behind", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+
+      const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-attachment-write-",
+      });
+
+      const write = (bytes: Uint8Array) =>
+        writeAttachment({
+          attachmentsDir,
+          attachment: {
+            type: "file",
+            id: "thread-1-00000000-0000-4000-8000-000000000003",
+            name: "notes.txt",
+            mimeType: "text/plain",
+          },
+          bytes,
+        });
+
+      yield* write(Buffer.from("first version"));
+      const saved = yield* write(Buffer.from("second"));
+      const fileName = "thread-1-00000000-0000-4000-8000-000000000003.txt";
+
+      expect(saved.sizeBytes).toBe(6);
+      expect(NodeFS.readdirSync(attachmentsDir)).toEqual([fileName]);
+      expect(NodeFS.readFileSync(NodePath.join(attachmentsDir, fileName), "utf8")).toBe("second");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });
