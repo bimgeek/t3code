@@ -133,7 +133,7 @@ const planDownload = (inbound: InboundChannelAttachment): Note | Download => {
   };
 };
 
-const withinLimit = (plans: ReadonlyArray<Note | Download>) => {
+const capDownloadsAtTurnLimit = (plans: ReadonlyArray<Note | Download>) => {
   let slots = 0;
 
   return plans.map((planned) => {
@@ -186,7 +186,7 @@ export const downloadInboundAttachments = Effect.fn("downloadInboundAttachments"
   attachments: ReadonlyArray<InboundChannelAttachment>,
 ) {
   const outcomes = yield* Effect.forEach(
-    withinLimit(attachments.map(planDownload)),
+    capDownloadsAtTurnLimit(attachments.map(planDownload)),
     (planned): Effect.Effect<Note | { readonly file: DownloadedChannelFile }> =>
       "note" in planned ? Effect.succeed(planned) : download(downloads, planned),
     { concurrency: "unbounded" },

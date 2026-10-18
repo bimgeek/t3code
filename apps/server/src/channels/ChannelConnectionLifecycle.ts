@@ -73,7 +73,10 @@ export const startChannel = (
     if (!project) return yield* failWith("The selected channel project is unavailable.", "project");
     let runtime: ChannelRuntimeEntry | undefined;
 
-    const dispatch = (message: InboundChannelMessage, attachments: DownloadedChannelAttachments) =>
+    const dispatchUnderProviderLock = (
+      message: InboundChannelMessage,
+      attachments: DownloadedChannelAttachments,
+    ) =>
       withChannelOperation(
         ctx,
         input.provider,
@@ -133,7 +136,7 @@ export const startChannel = (
     const onInbound: InboundCallback = (message) =>
       ctx.runSdkCallback(
         downloadInboundAttachments(ctx.downloads, message.attachments).pipe(
-          Effect.flatMap((attachments) => dispatch(message, attachments)),
+          Effect.flatMap((attachments) => dispatchUnderProviderLock(message, attachments)),
         ),
       );
 
