@@ -16,6 +16,7 @@ import { failWith } from "./ChannelErrors.ts";
 import { inboundAttachments, saveDownloadedFiles } from "./ChannelInboundAttachments.ts";
 import {
   type DownloadedChannelAttachments,
+  type InboundChannelAttachment,
   type InboundChannelMessage,
   type LiveProvider,
   type ChannelRuntimeContext,
@@ -112,60 +113,109 @@ export const normalizedInboundMessage = (
   attachments: inboundAttachments(message),
 });
 
+interface ContextLine {
+  readonly line: string;
+  readonly files: ReadonlyArray<{
+    readonly attachment: InboundChannelAttachment;
+    readonly markerStart: number;
+  }>;
+}
+
+const contextLine = (candidate: Message): ContextLine | null => {
+  const text = plainTextWithLinks(candidate);
+  const author = candidate.author;
+  let line = `${author.fullName || author.userName || author.userId}:`;
+  let hasBody = false;
+
+  const append = (part: string) => {
+    line += " ";
+    const start = line.length;
+    line += part;
+    hasBody = true;
+
+    return start;
+  };
+
+  if (text.trim()) append(text);
+
+  const files = inboundAttachments(candidate).map((attachment) => ({
+    attachment,
+    markerStart: append(`[shared ${attachment.name}]`),
+  }));
+
+  return hasBody ? { line, files } : null;
+};
+
+/**
+ * Keeps the newest context lines that fit the character limit, cutting only the oldest kept
+ * line from its start. A context file comes along only while its own marker is intact, so the
+ * bot never gets a file the context text no longer names. Files are newest first.
+ */
+const boundedContext = (lines: ReadonlyArray<ContextLine>) => {
+  const kept: Array<{
+    readonly line: string;
+    readonly attachments: ReadonlyArray<InboundChannelAttachment>;
+  }> = [];
+
+  let remaining = CHANNEL_MENTION_CONTEXT_CHARACTER_LIMIT;
+
+  for (const { line, files } of lines.toReversed()) {
+    const room = remaining - (kept.length > 0 ? 1 : 0);
+
+    if (room <= 0) break;
+    const cut = Math.max(0, line.length - room);
+
+    kept.push({
+      line: line.slice(cut),
+      attachments: files.flatMap((file) => (file.markerStart >= cut ? [file.attachment] : [])),
+    });
+    remaining = room - (line.length - cut);
+
+    if (cut > 0) break;
+  }
+
+  return {
+    text: kept
+      .toReversed()
+      .map(({ line }) => line)
+      .join("\n"),
+    attachments: kept.flatMap(({ attachments }) => attachments),
+  };
+};
+
 export async function mentionWithContext(
   thread: Pick<Thread, "id" | "recentMessages" | "refresh">,
   message: Message,
 ): Promise<InboundChannelMessage> {
   await thread.refresh().catch(() => undefined);
+  const recent = thread.recentMessages;
+  const mentionIndex = recent.findIndex((candidate) => candidate.id === message.id);
 
-  const context = thread.recentMessages
-    .filter(
-      (candidate) =>
-        candidate.id !== message.id &&
-        candidate.author.isBot !== true &&
-        candidate.author.isMe !== true,
-    )
-    .map((candidate) => {
-      const text = plainTextWithLinks(candidate);
-      const attachments = inboundAttachments(candidate);
-      const markers = attachments.map((attachment) => `[shared ${attachment.name}]`);
+  // `recentMessages` is oldest first. Dates alone can tie: Slack times messages in microseconds.
+  const earlier =
+    mentionIndex >= 0
+      ? recent.slice(0, mentionIndex)
+      : recent.filter(
+          (candidate) =>
+            candidate.metadata.dateSent.getTime() <= message.metadata.dateSent.getTime(),
+        );
 
-      return {
-        author: candidate.author,
-        body: [...(text.trim() ? [text] : []), ...markers].join(" "),
-        attachments,
-      };
-    })
-    .filter((candidate) => candidate.body)
-    .slice(-CHANNEL_MENTION_CONTEXT_LIMIT)
-    .map((candidate) => ({
-      line: `${candidate.author.fullName || candidate.author.userName || candidate.author.userId}: ${candidate.body}`,
-      attachments: candidate.attachments,
-    }));
-
-  const boundedContext = context
-    .map(({ line }) => line)
-    .join("\n")
-    .slice(-CHANNEL_MENTION_CONTEXT_CHARACTER_LIMIT);
-
-  let newerCharacters = 0;
-
-  const contextAttachments = context.toReversed().flatMap(({ line, attachments }) => {
-    const kept = newerCharacters < CHANNEL_MENTION_CONTEXT_CHARACTER_LIMIT;
-    newerCharacters += line.length + 1;
-
-    return kept ? attachments : [];
-  });
+  const context = boundedContext(
+    earlier
+      .filter((candidate) => candidate.author.isBot !== true && candidate.author.isMe !== true)
+      .flatMap((candidate) => contextLine(candidate) ?? [])
+      .slice(-CHANNEL_MENTION_CONTEXT_LIMIT),
+  );
 
   const messageText = plainTextWithLinks(message);
 
   const normalized = normalizedInboundMessage(
     thread,
     message,
-    boundedContext.length === 0 ? messageText : `${boundedContext}\n${messageText}`,
+    context.text.length === 0 ? messageText : `${context.text}\n${messageText}`,
   );
 
-  return { ...normalized, attachments: [...normalized.attachments, ...contextAttachments] };
+  return { ...normalized, attachments: [...normalized.attachments, ...context.attachments] };
 }
 
 export const subscribedExternalThreadIds = (

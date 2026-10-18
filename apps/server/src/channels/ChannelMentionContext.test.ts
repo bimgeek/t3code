@@ -95,4 +95,23 @@ describe("mention context", () => {
     expect(context.lines).toEqual(["U1: before [shared before.png]", "@U0AKERU what changed?"]);
     expect(context.files).toEqual(["before.png"]);
   });
+
+  it("leaves out later messages when the thread history no longer holds the mention", async () => {
+    const mention = slackMessage("1710000000.100000", "U3", "<@U0AKERU> what changed?");
+
+    const inbound = await mentionWithContext(
+      {
+        id: "slack:C1:1710000000.000001",
+        recentMessages: [
+          slackMessage("1710000000.000002", "U1", "before"),
+          slackMessage("1710000000.200000", "U2", "after", "after.png"),
+        ],
+        refresh: async () => undefined,
+      },
+      mention,
+    );
+
+    expect(inbound.text).toBe("U1: before\n@U0AKERU what changed?");
+    expect(inbound.attachments).toEqual([]);
+  });
 });
