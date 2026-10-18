@@ -50,7 +50,7 @@ export const inboundAttachments = (message: Message): ReadonlyArray<InboundChann
   });
 
 const supportedKind = (mimeType: string | undefined) => {
-  const normalized = (mimeType ?? "").toLowerCase();
+  const normalized = (mimeType ?? "").replace(/;.*/s, "").trim().toLowerCase();
   const image = PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES.find((type) => type === normalized);
 
   if (image) {

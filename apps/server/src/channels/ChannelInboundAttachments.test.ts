@@ -267,6 +267,21 @@ describe("files shared in channel messages", () => {
     }),
   );
 
+  it.effect("attaches a file whose type carries parameters", () =>
+    Effect.gen(function* () {
+      const bytes = new TextEncoder().encode("plain notes");
+
+      const result = yield* downloadInboundAttachments([
+        { name: "notes.txt", mimeType: "Text/Plain; charset=utf-8", fetch: async () => bytes },
+      ]);
+
+      expect(result).toEqual({
+        files: [{ name: "notes.txt", kind: { type: "file", mimeType: "text/plain" }, bytes }],
+        notes: [],
+      });
+    }),
+  );
+
   it.effect("counts only files it can attach toward the limit of 8", () =>
     Effect.gen(function* () {
       const result = yield* downloadInboundAttachments([
