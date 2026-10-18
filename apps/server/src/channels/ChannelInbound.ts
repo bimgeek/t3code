@@ -139,7 +139,7 @@ const contextLine = (candidate: Message): ContextLine | null => {
   if (text.trim()) append(text);
 
   const files = inboundAttachments(candidate).map((attachment) => ({
-    attachment,
+    attachment: { ...attachment, fromContext: true } satisfies InboundChannelAttachment,
     markerStart: append(`[shared ${attachment.name}]`),
   }));
 

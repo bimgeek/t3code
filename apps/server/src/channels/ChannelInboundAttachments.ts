@@ -79,39 +79,54 @@ const supportedKind = (mimeType: string | undefined) => {
 const megabytes = (bytes: number) => `${bytes / 1024 / 1024} MB`;
 
 interface Note {
-  readonly note: string;
+  readonly note: string | null;
 }
 
-interface Download {
+interface SharedFile {
   readonly name: string;
+  readonly fromContext?: true;
+}
+
+interface Download extends SharedFile {
   readonly kind: DownloadedChannelFileKind;
   readonly maxBytes: number;
   readonly fetch: () => Promise<Uint8Array>;
 }
 
-const notAttached = (name: string, reason: string): Note => ({
-  note: `[Shared file "${name}" was not attached: ${reason}]`,
+/** A context file gets no note: its `[shared name]` marker already names it to the bot. */
+const notAttached = (file: SharedFile, reason: string): Note => ({
+  note: file.fromContext ? null : `[Shared file "${file.name}" was not attached: ${reason}]`,
 });
 
-const tooLarge = (name: string, maxBytes: number) =>
-  notAttached(name, `larger than ${megabytes(maxBytes)}`);
+const tooLarge = (file: SharedFile, maxBytes: number) =>
+  notAttached(file, `larger than ${megabytes(maxBytes)}`);
+
+const notes = (
+  outcomes: ReadonlyArray<Note | { readonly file: unknown } | { readonly attachment: unknown }>,
+) =>
+  outcomes.flatMap((outcome) => ("note" in outcome && outcome.note !== null ? [outcome.note] : []));
 
 const planDownload = (inbound: InboundChannelAttachment): Note | Download => {
-  const { name } = inbound;
   const supported = supportedKind(inbound.mimeType);
 
-  if (!supported) return notAttached(name, `unsupported type ${inbound.mimeType ?? "unknown"}`);
+  if (!supported) return notAttached(inbound, `unsupported type ${inbound.mimeType ?? "unknown"}`);
 
-  if ((inbound.sizeBytes ?? 0) > supported.maxBytes) return tooLarge(name, supported.maxBytes);
+  if ((inbound.sizeBytes ?? 0) > supported.maxBytes) return tooLarge(inbound, supported.maxBytes);
 
   if (!inbound.fetch) {
     return notAttached(
-      name,
+      inbound,
       inbound.url ? `no download available, ${inbound.url}` : "no download available",
     );
   }
 
-  return { name, kind: supported.kind, maxBytes: supported.maxBytes, fetch: inbound.fetch };
+  return {
+    name: inbound.name,
+    ...(inbound.fromContext ? { fromContext: true as const } : {}),
+    kind: supported.kind,
+    maxBytes: supported.maxBytes,
+    fetch: inbound.fetch,
+  };
 };
 
 const withinLimit = (plans: ReadonlyArray<Note | Download>) => {
@@ -122,10 +137,7 @@ const withinLimit = (plans: ReadonlyArray<Note | Download>) => {
     slots += 1;
 
     return slots > PROVIDER_SEND_TURN_MAX_ATTACHMENTS
-      ? notAttached(
-          planned.name,
-          `more than ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files in one message`,
-        )
+      ? notAttached(planned, `more than ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files in one message`)
       : planned;
   });
 };
@@ -144,15 +156,16 @@ const download = Effect.fn("downloadChannelFile")(function* (planned: Download) 
     Effect.option,
   );
 
-  if (Option.isNone(bytes)) return notAttached(name, "download failed");
+  if (Option.isNone(bytes)) return notAttached(planned, "download failed");
 
-  if (bytes.value.byteLength === 0) return notAttached(name, "the file is empty");
+  if (bytes.value.byteLength === 0) return notAttached(planned, "the file is empty");
 
-  if (bytes.value.byteLength > planned.maxBytes) return tooLarge(name, planned.maxBytes);
+  if (bytes.value.byteLength > planned.maxBytes) return tooLarge(planned, planned.maxBytes);
 
   return {
     file: {
       name,
+      ...(planned.fromContext ? { fromContext: true as const } : {}),
       kind: planned.kind,
       bytes: bytes.value,
       contentHash: NodeCrypto.createHash("sha256").update(bytes.value).digest("hex"),
@@ -172,7 +185,7 @@ export const downloadInboundAttachments = Effect.fn("downloadInboundAttachments"
 
   return {
     files: outcomes.flatMap((outcome) => ("file" in outcome ? [outcome.file] : [])),
-    notes: outcomes.flatMap((outcome) => ("note" in outcome ? [outcome.note] : [])),
+    notes: notes(outcomes),
   } satisfies DownloadedChannelAttachments;
 });
 
@@ -195,7 +208,7 @@ const saveFile = Effect.fn("saveChannelFile")(function* (
   const { name } = file;
   const id = channelFileAttachmentId(threadId, messageId, file.contentHash, occurrence);
 
-  if (!id) return notAttached(name, "it could not be saved");
+  if (!id) return notAttached(file, "it could not be saved");
 
   const saved = yield* ctx.deps
     .writeAttachmentIfMissing({ ...file.kind, id, name }, file.bytes)
@@ -212,7 +225,7 @@ const saveFile = Effect.fn("saveChannelFile")(function* (
 
   return Option.isSome(saved)
     ? { attachment: saved.value }
-    : notAttached(name, "it could not be saved");
+    : notAttached(file, "it could not be saved");
 });
 
 export const saveDownloadedFiles = Effect.fn("saveDownloadedFiles")(function* (
@@ -241,6 +254,6 @@ export const saveDownloadedFiles = Effect.fn("saveDownloadedFiles")(function* (
       (outcome): ReadonlyArray<ChatAttachment> =>
         "attachment" in outcome ? [outcome.attachment] : [],
     ),
-    notes: outcomes.flatMap((outcome) => ("note" in outcome ? [outcome.note] : [])),
+    notes: notes(outcomes),
   };
 });
