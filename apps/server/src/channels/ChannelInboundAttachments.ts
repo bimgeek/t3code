@@ -176,16 +176,24 @@ export const downloadInboundAttachments = Effect.fn("downloadInboundAttachments"
   } satisfies DownloadedChannelAttachments;
 });
 
+// The key holds the content hash and same-hash occurrence instead of the position, because
+// context files can shift position when a mention is redelivered.
+export const channelFileAttachmentId = (
+  threadId: ThreadId,
+  messageId: MessageId,
+  contentHash: string,
+  occurrence: number,
+) => deterministicAttachmentId(threadId, `${messageId}\0${contentHash}\0${occurrence}`);
+
 const saveFile = Effect.fn("saveChannelFile")(function* (
   ctx: ChannelRuntimeContext,
   threadId: ThreadId,
   messageId: MessageId,
   file: DownloadedChannelFile,
-  index: number,
+  occurrence: number,
 ) {
   const { name } = file;
-  const contentHash = NodeCrypto.createHash("sha256").update(file.bytes).digest("hex");
-  const id = deterministicAttachmentId(threadId, `${messageId}\0${index}\0${contentHash}`);
+  const id = channelFileAttachmentId(threadId, messageId, file.contentHash, occurrence);
 
   if (!id) return notAttached(name, "it could not be saved");
 
@@ -215,9 +223,16 @@ export const saveDownloadedFiles = Effect.fn("saveDownloadedFiles")(function* (
     readonly files: ReadonlyArray<DownloadedChannelFile>;
   },
 ) {
+  const occurrences = new Map<string, number>();
+
   const outcomes = yield* Effect.forEach(
     input.files,
-    (file, index) => saveFile(ctx, input.threadId, input.messageId, file, index),
+    (file) => {
+      const occurrence = occurrences.get(file.contentHash) ?? 0;
+      occurrences.set(file.contentHash, occurrence + 1);
+
+      return saveFile(ctx, input.threadId, input.messageId, file, occurrence);
+    },
     { concurrency: 1 },
   );
 

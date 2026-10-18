@@ -357,10 +357,14 @@ describe("files shared in channel messages", () => {
         externalThreadId: "telegram:files",
         externalMessageId: "telegram-files-1",
         text: "three files",
-        attachments: ["one", "two", "three"].map((label) => ({
-          name: `${label}.txt`,
+        attachments: [
+          ["one.txt", "one"],
+          ["two.txt", "two"],
+          ["copy.txt", "one"],
+        ].map(([name, content]) => ({
+          name: name ?? "",
           mimeType: "text/plain",
-          fetch: async () => new TextEncoder().encode(label),
+          fetch: async () => new TextEncoder().encode(content),
         })),
       });
 
@@ -369,7 +373,7 @@ describe("files shared in channel messages", () => {
       expect(attachments.map((attachment) => attachment.name)).toEqual([
         "one.txt",
         "two.txt",
-        "three.txt",
+        "copy.txt",
       ]);
       expect(new Set(attachments.map((attachment) => attachment.id)).size).toBe(3);
       expect(NodeFS.readdirSync(harness.attachmentsDir)).toHaveLength(3);
@@ -379,7 +383,44 @@ describe("files shared in channel messages", () => {
             storedBytes(harness.attachmentsDir, attachment.id) ?? new Uint8Array(),
           ),
         ),
-      ).toEqual(["one", "two", "three"]);
+      ).toEqual(["one", "two", "one"]);
+    }),
+  );
+
+  it.effect("keeps a context file's id when a file before it is gone on redelivery", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({});
+
+      const file = (name: string) => ({
+        name,
+        mimeType: "text/plain",
+        fetch: async () => new TextEncoder().encode(name),
+      });
+
+      const mention = {
+        botId: BOT_ID,
+        projectId: PROJECT_ID,
+        provider: "slack" as const,
+        externalThreadId: "slack:C123:1710000000.000050",
+        externalMessageId: "1710000000.000052",
+        text: "@U0AKERU compare these",
+      };
+
+      yield* dispatchShared(harness.dependencies, {
+        ...mention,
+        attachments: [file("mine.txt"), file("deleted.txt"), file("kept.txt")],
+      });
+      yield* dispatchShared(harness.dependencies, {
+        ...mention,
+        attachments: [file("mine.txt"), file("kept.txt")],
+      });
+
+      const [first, second] = turnStarts(harness.commands).map((turn) =>
+        Object.fromEntries(turn.message.attachments.map(({ name, id }) => [name, id])),
+      );
+
+      expect(second).toEqual({ "mine.txt": first?.["mine.txt"], "kept.txt": first?.["kept.txt"] });
+      expect(NodeFS.readdirSync(harness.attachmentsDir)).toHaveLength(3);
     }),
   );
 
