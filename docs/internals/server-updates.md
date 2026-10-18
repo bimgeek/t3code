@@ -33,8 +33,8 @@ is authoritative and the service manager's ordinary restart policy applies.
 The prepared deadline is long because migrations can scale with the database
 and block the trial's main thread, so it cannot report progress. A missed
 deadline restores the snapshot, and the retry pays the same cost again. A
-crashed trial is caught when it exits; the deadline bounds only a stuck one. Client update waits must outlast the deadline, or a slow update shows
-as failed.
+crashed trial is caught when it exits; the deadline bounds only a stuck one.
+Client update waits must outlast the deadline, or a slow update shows as failed.
 
 ## Database rollback
 
