@@ -255,7 +255,6 @@ describe("files shared in channel messages", () => {
           '[Shared file "linked.png" was not attached: no download available, https://cdn.example.com/linked.png]',
           '[Shared file "huge.pdf" was not attached: larger than 10 MB]',
           '[Shared file "notes.md" was not attached: the file is empty]',
-          '[Shared file "photo-9.png" was not attached: more than 8 files in one message]',
         ].join("\n"),
       );
       expect(turn?.message.attachments.map((attachment) => attachment.name)).toEqual([
@@ -263,6 +262,28 @@ describe("files shared in channel messages", () => {
         "photo-6.png",
         "photo-7.png",
         "photo-8.png",
+        "photo-9.png",
+      ]);
+    }),
+  );
+
+  it.effect("counts only files it can attach toward the limit of 8", () =>
+    Effect.gen(function* () {
+      const result = yield* downloadInboundAttachments([
+        { name: "report.zip", mimeType: "application/zip", fetch: async () => PNG_BYTES },
+        ...Array.from({ length: 9 }, (_, index) => ({
+          name: `photo-${index + 1}.png`,
+          mimeType: "image/png",
+          fetch: async () => PNG_BYTES,
+        })),
+      ]);
+
+      expect(result.files.map((file) => file.name)).toEqual(
+        Array.from({ length: 8 }, (_, index) => `photo-${index + 1}.png`),
+      );
+      expect(result.notes).toEqual([
+        '[Shared file "report.zip" was not attached: unsupported type application/zip]',
+        '[Shared file "photo-9.png" was not attached: more than 8 files in one message]',
       ]);
     }),
   );

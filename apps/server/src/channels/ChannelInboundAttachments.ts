@@ -90,16 +90,8 @@ const notAttached = (name: string, reason: string): Note => ({
 const tooLarge = (name: string, maxBytes: number) =>
   notAttached(name, `larger than ${megabytes(maxBytes)}`);
 
-const planDownload = (inbound: InboundChannelAttachment, index: number): Note | Download => {
+const planDownload = (inbound: InboundChannelAttachment): Note | Download => {
   const { name } = inbound;
-
-  if (index >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
-    return notAttached(
-      name,
-      `more than ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files in one message`,
-    );
-  }
-
   const supported = supportedKind(inbound.mimeType);
 
   if (!supported) return notAttached(name, `unsupported type ${inbound.mimeType ?? "unknown"}`);
@@ -114,6 +106,23 @@ const planDownload = (inbound: InboundChannelAttachment, index: number): Note | 
   }
 
   return { name, kind: supported.kind, maxBytes: supported.maxBytes, fetch: inbound.fetch };
+};
+
+/** Files that pass the type and size rules take the slots in order; a rejected file takes none. */
+const withinLimit = (plans: ReadonlyArray<Note | Download>) => {
+  let slots = 0;
+
+  return plans.map((planned) => {
+    if ("note" in planned) return planned;
+    slots += 1;
+
+    return slots > PROVIDER_SEND_TURN_MAX_ATTACHMENTS
+      ? notAttached(
+          planned.name,
+          `more than ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files in one message`,
+        )
+      : planned;
+  });
 };
 
 const download = Effect.fn("downloadChannelFile")(function* (planned: Download) {
@@ -144,7 +153,7 @@ export const downloadInboundAttachments = Effect.fn("downloadInboundAttachments"
   attachments: ReadonlyArray<InboundChannelAttachment>,
 ) {
   const outcomes = yield* Effect.forEach(
-    attachments.map(planDownload),
+    withinLimit(attachments.map(planDownload)),
     (planned): Effect.Effect<Note | { readonly file: DownloadedChannelFile }> =>
       "note" in planned ? Effect.succeed(planned) : download(planned),
     { concurrency: DOWNLOAD_CONCURRENCY },
