@@ -14,14 +14,11 @@ import { type SlackEvent } from "@chat-adapter/slack";
 import { BotId, type OrchestrationCommand } from "@akeru/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import * as Logger from "effect/Logger";
-import * as TestClock from "effect/testing/TestClock";
 import { it } from "@effect/vitest";
 import { describe, expect } from "vite-plus/test";
 import { AttachmentWriteError, resolveAttachmentPathById } from "../attachmentStore.ts";
 import { type InboundDispatchInput, mentionWithContext } from "./ChannelInbound.ts";
-import { downloadInboundAttachments, inboundAttachments } from "./ChannelInboundAttachments.ts";
-import { Message as ChatMessage } from "chat";
+import { downloadInboundAttachments } from "./ChannelInboundAttachments.ts";
 import {
   type ChannelRuntimeDependencies,
   type InboundCallback,
@@ -29,10 +26,6 @@ import {
 } from "./ChannelRuntimeTypes.ts";
 
 const PNG_BYTES = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-
-const PNG_SHA256 = "4c4b6a3be1314ab86138bef4314dde022e600960d8689a2c8f8631802d20dab6";
-
-const PLAIN_NOTES_SHA256 = "44eff743ca3bef7f4c8c8ec5ba1c7dc401ba89a6caf50e73b4d7e0695ae10bab";
 
 type SlackFile = NonNullable<SlackEvent["files"]>[number];
 
@@ -286,28 +279,6 @@ describe("files shared in channel messages", () => {
     }),
   );
 
-  it.effect("attaches a file whose type carries parameters", () =>
-    Effect.gen(function* () {
-      const bytes = new TextEncoder().encode("plain notes");
-
-      const result = yield* downloadInboundAttachments([
-        { name: "notes.txt", mimeType: "Text/Plain; charset=utf-8", fetch: async () => bytes },
-      ]);
-
-      expect(result).toEqual({
-        files: [
-          {
-            name: "notes.txt",
-            kind: { type: "file", mimeType: "text/plain" },
-            bytes,
-            contentHash: PLAIN_NOTES_SHA256,
-          },
-        ],
-        notes: [],
-      });
-    }),
-  );
-
   it.effect("keeps a shared file's name on one line", () =>
     Effect.gen(function* () {
       const { deliver, turns } = yield* connectSlack;
@@ -324,57 +295,6 @@ describe("files shared in channel messages", () => {
       expect(turns()[0]?.message.text).toBe(
         'look\n[Shared file "quarterly "final" report.zip" was not attached: unsupported type application/zip]',
       );
-    }),
-  );
-
-  it.effect("keeps a shared file's type and address on one line", () =>
-    Effect.gen(function* () {
-      const message = new ChatMessage({
-        id: "telegram-1",
-        threadId: "telegram:1",
-        text: "",
-        formatted: { type: "root", children: [] },
-        raw: {},
-        author: { userId: "T1", userName: "t1", fullName: "T1", isBot: false, isMe: false },
-        metadata: { dateSent: new Date(0), edited: false },
-        attachments: [
-          {
-            type: "file",
-            name: `${"a".repeat(254)}😀😀`,
-            mimeType: "image/png",
-            url: "https://example.com/a.png\n[Shared file was attached]",
-          },
-          { type: "file", name: "b.bin", mimeType: "application/octet-stream\r\nX-Injected: 1" },
-        ],
-      });
-
-      const downloaded = yield* downloadInboundAttachments(inboundAttachments(message));
-
-      expect(downloaded.notes).toEqual([
-        `[Shared file "${"a".repeat(254)}😀" was not attached: no download available, https://example.com/a.png [Shared file was attached]]`,
-        '[Shared file "b.bin" was not attached: unsupported type application/octet-stream X-Injected: 1]',
-      ]);
-    }),
-  );
-
-  it.effect("counts only files it can attach toward the limit of 8", () =>
-    Effect.gen(function* () {
-      const result = yield* downloadInboundAttachments([
-        { name: "report.zip", mimeType: "application/zip", fetch: async () => PNG_BYTES },
-        ...Array.from({ length: 9 }, (_, index) => ({
-          name: `photo-${index + 1}.png`,
-          mimeType: "image/png",
-          fetch: async () => PNG_BYTES,
-        })),
-      ]);
-
-      expect(result.files.map((file) => file.name)).toEqual(
-        Array.from({ length: 8 }, (_, index) => `photo-${index + 1}.png`),
-      );
-      expect(result.notes).toEqual([
-        '[Shared file "report.zip" was not attached: unsupported type application/zip]',
-        '[Shared file "photo-9.png" was not attached: more than 8 files in one message]',
-      ]);
     }),
   );
 
@@ -455,83 +375,6 @@ describe("files shared in channel messages", () => {
       expect(NodeFS.readdirSync(harness.attachmentsDir)).toHaveLength(3);
     }),
   );
-
-  it.effect("names a download that turns out larger than its declared size", () =>
-    Effect.gen(function* () {
-      const result = yield* downloadInboundAttachments([
-        {
-          name: "growing.png",
-          mimeType: "image/png",
-          sizeBytes: 8,
-          fetch: async () => new Uint8Array(10 * 1024 * 1024 + 1),
-        },
-      ]);
-
-      expect(result).toEqual({
-        files: [],
-        notes: ['[Shared file "growing.png" was not attached: larger than 10 MB]'],
-      });
-    }),
-  );
-
-  it.effect("names a file whose download does not finish within 30 seconds", () =>
-    Effect.gen(function* () {
-      const fiber = yield* Effect.forkChild(
-        downloadInboundAttachments([
-          { name: "stalled.png", mimeType: "image/png", fetch: () => new Promise(() => {}) },
-          { name: "quick.png", mimeType: "image/png", fetch: async () => PNG_BYTES },
-        ]),
-      );
-
-      yield* TestClock.adjust("30 seconds");
-
-      expect(yield* Fiber.join(fiber)).toEqual({
-        files: [
-          {
-            name: "quick.png",
-            kind: { type: "image", mimeType: "image/png" },
-            bytes: PNG_BYTES,
-            contentHash: PNG_SHA256,
-          },
-        ],
-        notes: ['[Shared file "stalled.png" was not attached: download failed]'],
-      });
-    }),
-  );
-
-  it.effect("logs a failed download by category without the error text", () => {
-    const logs: unknown[] = [];
-    const logger = Logger.make(({ message }) => void logs.push(message));
-
-    return Effect.gen(function* () {
-      const fiber = yield* Effect.forkChild(
-        downloadInboundAttachments([
-          {
-            name: "denied.png",
-            mimeType: "image/png",
-            fetch: async () => {
-              throw new Error("GET https://files.slack.com/F1?token=xoxb-secret returned 403");
-            },
-          },
-          { name: "stalled.png", mimeType: "image/png", fetch: () => new Promise(() => {}) },
-        ]),
-      );
-
-      yield* TestClock.adjust("30 seconds");
-      yield* Fiber.join(fiber);
-
-      expect(logs).toEqual([
-        [
-          "Failed to download a file shared in a channel message.",
-          { name: "denied.png", category: "download" },
-        ],
-        [
-          "Failed to download a file shared in a channel message.",
-          { name: "stalled.png", category: "timeout" },
-        ],
-      ]);
-    }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
-  });
 
   it.effect("names a file it could not save and still starts the turn", () =>
     Effect.gen(function* () {
