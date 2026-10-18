@@ -1,4 +1,5 @@
 import { photon, externalAdapters } from "./channelAdapters.ts";
+import { makeAttachmentsDir } from "./channelAttachments.ts";
 
 export { photon, externalAdapters } from "./channelAdapters.ts";
 
@@ -478,6 +479,7 @@ function makeHarness(input: {
   let settings = DEFAULT_SERVER_SETTINGS;
   const threads = [...(input.threads ?? [])];
   const commands: OrchestrationCommand[] = [];
+  const attachmentsDir = makeAttachmentsDir();
   const { store: memorySecretStore, values: secrets } = makeMemorySecretStore();
   const secretStore = input.secretStore ?? memorySecretStore;
   let sequence = model.snapshotSequence;
@@ -576,6 +578,7 @@ function makeHarness(input: {
 
   return {
     commands,
+    attachmentsDir,
     dependencies,
     secrets,
     archive,
