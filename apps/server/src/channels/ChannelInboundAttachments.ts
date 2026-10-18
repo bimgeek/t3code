@@ -10,6 +10,7 @@ import {
   type ThreadId,
 } from "@akeru/contracts";
 import { type Message } from "chat";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { deterministicAttachmentId } from "../attachmentStore.ts";
@@ -147,10 +148,10 @@ const download = Effect.fn("downloadChannelFile")(function* (planned: Download) 
 
   const bytes = yield* Effect.tryPromise(planned.fetch).pipe(
     Effect.timeout(DOWNLOAD_TIMEOUT),
-    Effect.tapError((cause) =>
+    Effect.tapError((error) =>
       Effect.logWarning("Failed to download a file shared in a channel message.", {
         name,
-        cause,
+        category: Cause.isTimeoutError(error) ? "timeout" : "download",
       }),
     ),
     Effect.option,
@@ -213,11 +214,11 @@ const saveFile = Effect.fn("saveChannelFile")(function* (
   const saved = yield* ctx.deps
     .writeAttachmentIfMissing({ ...file.kind, id, name }, file.bytes)
     .pipe(
-      Effect.tapError((cause) =>
+      Effect.tapError(() =>
         Effect.logWarning("Failed to save a file shared in a channel message.", {
           threadId,
           name,
-          cause,
+          category: "save",
         }),
       ),
       Effect.option,

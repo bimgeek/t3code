@@ -14,6 +14,7 @@ import { type SlackEvent } from "@chat-adapter/slack";
 import { BotId, type OrchestrationCommand } from "@akeru/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Logger from "effect/Logger";
 import * as TestClock from "effect/testing/TestClock";
 import { it } from "@effect/vitest";
 import { describe, expect } from "vite-plus/test";
@@ -466,6 +467,40 @@ describe("files shared in channel messages", () => {
       });
     }),
   );
+
+  it.effect("logs a failed download by category without the error text", () => {
+    const logs: unknown[] = [];
+    const logger = Logger.make(({ message }) => void logs.push(message));
+
+    return Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(
+        downloadInboundAttachments([
+          {
+            name: "denied.png",
+            mimeType: "image/png",
+            fetch: async () => {
+              throw new Error("GET https://files.slack.com/F1?token=xoxb-secret returned 403");
+            },
+          },
+          { name: "stalled.png", mimeType: "image/png", fetch: () => new Promise(() => {}) },
+        ]),
+      );
+
+      yield* TestClock.adjust("30 seconds");
+      yield* Fiber.join(fiber);
+
+      expect(logs).toEqual([
+        [
+          "Failed to download a file shared in a channel message.",
+          { name: "denied.png", category: "download" },
+        ],
+        [
+          "Failed to download a file shared in a channel message.",
+          { name: "stalled.png", category: "timeout" },
+        ],
+      ]);
+    }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+  });
 
   it.effect("names a file it could not save and still starts the turn", () =>
     Effect.gen(function* () {
