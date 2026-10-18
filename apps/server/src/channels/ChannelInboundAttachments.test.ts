@@ -18,7 +18,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { it } from "@effect/vitest";
 import { describe, expect } from "vite-plus/test";
 import { AttachmentWriteError, resolveAttachmentPathById } from "../attachmentStore.ts";
-import { type InboundDispatchInput } from "./ChannelInbound.ts";
+import { type InboundDispatchInput, mentionWithContext } from "./ChannelInbound.ts";
 import { downloadInboundAttachments } from "./ChannelInboundAttachments.ts";
 import {
   type ChannelRuntimeDependencies,
@@ -55,7 +55,7 @@ const connectSlack = Effect.gen(function* () {
 
   const downloads: string[] = [];
 
-  const deliver = (event: SlackEvent) => {
+  const parse = (event: SlackEvent) => {
     const message = slackAdapter.parseMessage(event);
 
     for (const attachment of message.attachments) {
@@ -66,6 +66,12 @@ const connectSlack = Effect.gen(function* () {
       };
     }
 
+    return message;
+  };
+
+  const deliver = (event: SlackEvent) => {
+    const message = parse(event);
+
     return Effect.promise(() => slackChat.processMessage(slackAdapter, message.threadId, message));
   };
 
@@ -75,7 +81,7 @@ const connectSlack = Effect.gen(function* () {
         command.type === "thread.turn.start",
     );
 
-  return { harness, deliver, downloads, turns };
+  return { harness, parse, deliver, downloads, turns };
 });
 
 /** Downloads and dispatches the way a connected transport does, around the provider lock. */
@@ -497,6 +503,116 @@ describe("files shared in channel messages", () => {
       ).toEqual([
         ["hello", []],
         ["big photo", ["photo.png"]],
+      ]);
+    }),
+  );
+
+  it.effect("passes a screenshot shared before a Slack mention to the bot", () =>
+    Effect.gen(function* () {
+      const { harness, parse, turns } = yield* connectSlack;
+
+      const thread = (event: Partial<SlackEvent>) =>
+        parse({
+          type: "message",
+          channel: "C123",
+          thread_ts: "1710000000.000030",
+          user: "U1",
+          text: "",
+          ...event,
+        });
+
+      const screenshot = thread({ ts: "1710000000.000030", files: [pngFile] });
+
+      const mention = thread({
+        ts: "1710000000.000031",
+        user: "U2",
+        text: "<@U0AKERU> what's wrong here?",
+      });
+
+      const inbound = yield* Effect.promise(() =>
+        mentionWithContext(
+          {
+            id: mention.threadId,
+            recentMessages: [screenshot, mention],
+            refresh: async () => undefined,
+          },
+          mention,
+        ),
+      );
+
+      yield* dispatchShared(harness.dependencies, {
+        ...inbound,
+        botId: BOT_ID,
+        projectId: PROJECT_ID,
+        provider: "slack",
+      });
+
+      const [turn] = turns();
+
+      expect(turn?.message.text).toBe("U1: [shared shot.png]\n@U0AKERU what's wrong here?");
+      expect(turn?.message.attachments.map(({ id: _id, ...rest }) => rest)).toEqual([
+        { type: "image", name: "shot.png", mimeType: "image/png", sizeBytes: 8 },
+      ]);
+      expect(storedBytes(harness.attachmentsDir, turn?.message.attachments[0]?.id ?? "")).toEqual(
+        PNG_BYTES,
+      );
+    }),
+  );
+
+  it.effect("orders a mention's own files before context files, newest context first", () =>
+    Effect.gen(function* () {
+      const { harness, parse, turns } = yield* connectSlack;
+      let ts = 40;
+
+      const thread = (text: string, name?: string) => {
+        ts += 1;
+
+        return parse({
+          type: "message",
+          channel: "C123",
+          ts: `1710000000.0000${ts}`,
+          thread_ts: "1710000000.000040",
+          user: "U1",
+          text,
+          ...(name ? { files: [{ ...pngFile, id: name, name }] } : {}),
+        });
+      };
+
+      const outsideWindow = thread("", "old.png");
+      const chatter = Array.from({ length: 8 }, (_, index) => thread(`note ${index}`));
+      const described = thread("first try", "a.png");
+      const fileOnly = thread("", "b.png");
+      const mention = thread("<@U0AKERU> compare these", "c.png");
+
+      const inbound = yield* Effect.promise(() =>
+        mentionWithContext(
+          {
+            id: mention.threadId,
+            recentMessages: [outsideWindow, ...chatter, described, fileOnly, mention],
+            refresh: async () => undefined,
+          },
+          mention,
+        ),
+      );
+
+      yield* dispatchShared(harness.dependencies, {
+        ...inbound,
+        botId: BOT_ID,
+        projectId: PROJECT_ID,
+        provider: "slack",
+      });
+
+      const [turn] = turns();
+
+      expect(turn?.message.text.split("\n").slice(-3)).toEqual([
+        "U1: first try [shared a.png]",
+        "U1: [shared b.png]",
+        "@U0AKERU compare these",
+      ]);
+      expect(turn?.message.attachments.map((attachment) => attachment.name)).toEqual([
+        "c.png",
+        "b.png",
+        "a.png",
       ]);
     }),
   );

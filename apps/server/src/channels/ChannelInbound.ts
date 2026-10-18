@@ -125,22 +125,48 @@ export async function mentionWithContext(
         candidate.author.isBot !== true &&
         candidate.author.isMe !== true,
     )
-    .map((candidate) => ({ author: candidate.author, text: plainTextWithLinks(candidate) }))
-    .filter((candidate) => candidate.text.trim())
-    .slice(-CHANNEL_MENTION_CONTEXT_LIMIT)
-    .map(
-      (candidate) =>
-        `${candidate.author.fullName || candidate.author.userName || candidate.author.userId}: ${candidate.text}`,
-    );
+    .map((candidate) => {
+      const text = plainTextWithLinks(candidate);
+      const attachments = inboundAttachments(candidate);
+      const markers = attachments.map((attachment) => `[shared ${attachment.name}]`);
 
-  const boundedContext = context.join("\n").slice(-CHANNEL_MENTION_CONTEXT_CHARACTER_LIMIT);
+      return {
+        author: candidate.author,
+        body: [...(text.trim() ? [text] : []), ...markers].join(" "),
+        attachments,
+      };
+    })
+    .filter((candidate) => candidate.body)
+    .slice(-CHANNEL_MENTION_CONTEXT_LIMIT)
+    .map((candidate) => ({
+      line: `${candidate.author.fullName || candidate.author.userName || candidate.author.userId}: ${candidate.body}`,
+      attachments: candidate.attachments,
+    }));
+
+  const boundedContext = context
+    .map(({ line }) => line)
+    .join("\n")
+    .slice(-CHANNEL_MENTION_CONTEXT_CHARACTER_LIMIT);
+
+  // Newest first, and only from lines the character limit keeps, whose ends hold the file markers.
+  let newerCharacters = 0;
+
+  const contextAttachments = context.toReversed().flatMap(({ line, attachments }) => {
+    const kept = newerCharacters < CHANNEL_MENTION_CONTEXT_CHARACTER_LIMIT;
+    newerCharacters += line.length + 1;
+
+    return kept ? attachments : [];
+  });
+
   const messageText = plainTextWithLinks(message);
 
-  return normalizedInboundMessage(
+  const normalized = normalizedInboundMessage(
     thread,
     message,
     boundedContext.length === 0 ? messageText : `${boundedContext}\n${messageText}`,
   );
+
+  return { ...normalized, attachments: [...normalized.attachments, ...contextAttachments] };
 }
 
 export const subscribedExternalThreadIds = (

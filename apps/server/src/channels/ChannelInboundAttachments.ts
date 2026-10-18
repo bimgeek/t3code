@@ -1,3 +1,4 @@
+import * as NodeCrypto from "node:crypto";
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
@@ -179,7 +180,10 @@ const saveFile = Effect.fn("saveChannelFile")(function* (
   index: number,
 ) {
   const { name } = file;
-  const id = deterministicAttachmentId(threadId, `${messageId}\0${index}`);
+  // Context files can shift position when a mention is redelivered, so the key includes the content
+  // and a rewrite of an existing id always writes the same bytes.
+  const contentHash = NodeCrypto.createHash("sha256").update(file.bytes).digest("hex");
+  const id = deterministicAttachmentId(threadId, `${messageId}\0${index}\0${contentHash}`);
 
   if (!id) return notAttached(name, "it could not be saved");
 
