@@ -28,22 +28,23 @@ const DOWNLOAD_CONCURRENCY = 4;
 
 const DOWNLOAD_TIMEOUT = "30 seconds";
 
-const oneLineName = (name: string) =>
-  name
-    .replace(/[\p{Cc}\s]+/gu, " ")
-    .trim()
-    .slice(0, ATTACHMENT_NAME_MAX_CHARS)
-    .trim();
+/** Platform values can reach the bot inside a one-line note, so each is kept to one line. */
+const oneLine = (value: string | undefined) => (value ?? "").replace(/[\p{Cc}\s]+/gu, " ").trim();
+
+const cappedName = (name: string) =>
+  Array.from(oneLine(name)).slice(0, ATTACHMENT_NAME_MAX_CHARS).join("").trim();
 
 export const inboundAttachments = (message: Message): ReadonlyArray<InboundChannelAttachment> =>
   message.attachments.map((attachment) => {
     const fetchData = attachment.fetchData;
+    const mimeType = oneLine(attachment.mimeType);
+    const url = oneLine(attachment.url);
 
     return {
-      name: oneLineName(attachment.name ?? "") || attachment.type,
-      ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
+      name: cappedName(attachment.name ?? "") || attachment.type,
+      ...(mimeType ? { mimeType } : {}),
       ...(attachment.size !== undefined ? { sizeBytes: attachment.size } : {}),
-      ...(attachment.url ? { url: attachment.url } : {}),
+      ...(url ? { url } : {}),
       ...(fetchData
         ? {
             fetch: async () => {

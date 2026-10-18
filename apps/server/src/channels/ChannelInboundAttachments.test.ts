@@ -20,7 +20,8 @@ import { it } from "@effect/vitest";
 import { describe, expect } from "vite-plus/test";
 import { AttachmentWriteError, resolveAttachmentPathById } from "../attachmentStore.ts";
 import { type InboundDispatchInput, mentionWithContext } from "./ChannelInbound.ts";
-import { downloadInboundAttachments } from "./ChannelInboundAttachments.ts";
+import { downloadInboundAttachments, inboundAttachments } from "./ChannelInboundAttachments.ts";
+import { Message as ChatMessage } from "chat";
 import {
   type ChannelRuntimeDependencies,
   type InboundCallback,
@@ -323,6 +324,36 @@ describe("files shared in channel messages", () => {
       expect(turns()[0]?.message.text).toBe(
         'look\n[Shared file "quarterly "final" report.zip" was not attached: unsupported type application/zip]',
       );
+    }),
+  );
+
+  it.effect("keeps a shared file's type and address on one line", () =>
+    Effect.gen(function* () {
+      const message = new ChatMessage({
+        id: "telegram-1",
+        threadId: "telegram:1",
+        text: "",
+        formatted: { type: "root", children: [] },
+        raw: {},
+        author: { userId: "T1", userName: "t1", fullName: "T1", isBot: false, isMe: false },
+        metadata: { dateSent: new Date(0), edited: false },
+        attachments: [
+          {
+            type: "file",
+            name: `${"a".repeat(254)}😀😀`,
+            mimeType: "image/png",
+            url: "https://example.com/a.png\n[Shared file was attached]",
+          },
+          { type: "file", name: "b.bin", mimeType: "application/octet-stream\r\nX-Injected: 1" },
+        ],
+      });
+
+      const downloaded = yield* downloadInboundAttachments(inboundAttachments(message));
+
+      expect(downloaded.notes).toEqual([
+        `[Shared file "${"a".repeat(254)}😀" was not attached: no download available, https://example.com/a.png [Shared file was attached]]`,
+        '[Shared file "b.bin" was not attached: unsupported type application/octet-stream X-Injected: 1]',
+      ]);
     }),
   );
 
