@@ -84,7 +84,8 @@ export const initializeChannelChat = (chat: Chat) =>
   );
 
 /**
- * Blank messages and anything a bot wrote, including this bot, never start a turn.
+ * Messages with neither text nor files, and anything a bot wrote, including this bot, never
+ * start a turn.
  *
  * Discord, Slack, WhatsApp and iMessage always give a person's message a real boolean, so an
  * `"unknown"` author there is treated as a bot. Telegram reports `"unknown"` for messages sent on
@@ -92,7 +93,7 @@ export const initializeChannelChat = (chat: Chat) =>
  * write, so only an explicit `true` counts as a bot on Telegram.
  */
 export const ignoredInbound = (provider: ChannelProvider, message: Message) =>
-  !message.text.trim() ||
+  (!message.text.trim() && message.attachments.length === 0) ||
   message.author.isMe === true ||
   (provider === "telegram" ? message.author.isBot === true : message.author.isBot !== false);
 

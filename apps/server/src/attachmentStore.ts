@@ -2,7 +2,11 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-import type { ChatAttachment } from "@akeru/contracts";
+import type { ChatAttachment, ChatFileAttachment, ChatImageAttachment } from "@akeru/contracts";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import {
   normalizeAttachmentRelativePath,
@@ -101,6 +105,22 @@ export function createAttachmentId(threadId: string): string | null {
   return `${threadSegment}-${NodeCrypto.randomUUID()}`;
 }
 
+/**
+ * An id that is the same every time `key` is processed for this thread, so a repeated
+ * delivery rewrites one file instead of leaving a copy behind.
+ */
+export function deterministicAttachmentId(threadId: string, key: string): string | null {
+  const threadSegment = toSafeThreadAttachmentSegment(threadId);
+
+  if (!threadSegment) {
+    return null;
+  }
+
+  const hex = NodeCrypto.createHash("sha256").update(key).digest("hex");
+
+  return `${threadSegment}-${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
 export function parseThreadSegmentFromAttachmentId(attachmentId: string): string | null {
   const normalizedId = normalizeAttachmentRelativePath(attachmentId);
 
@@ -166,6 +186,49 @@ export function resolveAttachmentPath(input: {
     relativePath: attachmentRelativePath(input.attachment),
   });
 }
+
+export type AttachmentToWrite =
+  | Omit<ChatImageAttachment, "sizeBytes">
+  | Omit<ChatFileAttachment, "sizeBytes">;
+
+export class AttachmentWriteError extends Schema.TaggedErrorClass<AttachmentWriteError>()(
+  "AttachmentWriteError",
+  { attachmentId: Schema.String, cause: Schema.optional(Schema.Defect()) },
+) {
+  override get message(): string {
+    return `Failed to write attachment '${this.attachmentId}'.`;
+  }
+}
+
+/** Writes already-validated bytes to the attachment store and returns the persisted attachment. */
+export const writeAttachment = Effect.fn("writeAttachment")(function* (input: {
+  readonly attachmentsDir: string;
+  readonly attachment: AttachmentToWrite;
+  readonly bytes: Uint8Array;
+}) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const attachment: ChatAttachment = { ...input.attachment, sizeBytes: input.bytes.byteLength };
+
+  const attachmentPath = resolveAttachmentPath({
+    attachmentsDir: input.attachmentsDir,
+    attachment,
+  });
+
+  const fail = (cause?: unknown) =>
+    new AttachmentWriteError({ attachmentId: attachment.id, cause });
+
+  if (!attachmentPath) {
+    return yield* fail();
+  }
+
+  yield* fileSystem
+    .makeDirectory(path.dirname(attachmentPath), { recursive: true })
+    .pipe(Effect.mapError(fail));
+  yield* fileSystem.writeFile(attachmentPath, input.bytes).pipe(Effect.mapError(fail));
+
+  return attachment;
+});
 
 export function resolveAttachmentPathById(input: {
   readonly attachmentsDir: string;

@@ -1,5 +1,5 @@
 import { photon, externalAdapters } from "./channelAdapters.ts";
-import { makeAttachmentsDir } from "./channelAttachments.ts";
+import { attachmentWriterFor, makeAttachmentsDir } from "./channelAttachments.ts";
 
 export { photon, externalAdapters } from "./channelAdapters.ts";
 
@@ -549,6 +549,7 @@ function makeHarness(input: {
       Effect.sync(() => threads.find((thread) => thread.id === threadId) ?? null),
     nowIso: Effect.succeed(NOW),
     randomUuid: Effect.sync(() => `uuid-${commands.length}`),
+    writeAttachment: attachmentWriterFor(attachmentsDir),
     // Accepts the Slack app-token probe, the only request the built-in transports send here.
     httpClient: slackProbeClient(true),
     ...(input.publicOrigin === null

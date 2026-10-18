@@ -8,6 +8,7 @@ import {
   type ChannelBinding,
   type ChannelFailureCategory,
   type ChannelProvider,
+  type ChatAttachment,
   type ClientOrchestrationCommand,
   type OrchestrationEvent,
   type ServerSettingsError,
@@ -20,6 +21,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/unstable/http";
+import { type AttachmentToWrite, type AttachmentWriteError } from "../attachmentStore.ts";
 import { ServerSecretStore, type SecretStoreError } from "../auth/ServerSecretStore.ts";
 import type { OrchestrationDispatchError } from "../orchestration/Errors.ts";
 import type { ProjectionRepositoryError } from "../persistence/Errors.ts";
@@ -101,12 +103,24 @@ export interface StartedChannel {
   readonly runtime: ChannelRuntimeEntry;
 }
 
+/** A file shared in a channel message, as the platform reported it. */
+export interface InboundChannelAttachment {
+  readonly name: string;
+  /** As reported by the platform. May be empty. */
+  readonly mimeType: string;
+  readonly sizeBytes?: number;
+  readonly url?: string;
+  /** Absent when the platform gives no way to download the file. */
+  readonly fetch?: () => Promise<Uint8Array>;
+}
+
 export interface InboundChannelMessage {
   readonly externalThreadId: string;
   readonly externalMessageId?: string;
   readonly externalSenderId?: string;
   readonly externalSenderName?: string;
   readonly text: string;
+  readonly attachments: ReadonlyArray<InboundChannelAttachment>;
 }
 
 /** SDK callback that hands an inbound message to the runtime that owns the transport. */
@@ -144,6 +158,11 @@ export interface ChannelRuntimeDependencies {
   ) => Effect.Effect<OrchestrationThread | null, ProjectionRepositoryError>;
   readonly nowIso: Effect.Effect<string>;
   readonly randomUuid: Effect.Effect<string, PlatformError.PlatformError>;
+  /** Saves a file shared in a channel message to the attachment store. */
+  readonly writeAttachment: (
+    attachment: AttachmentToWrite,
+    bytes: Uint8Array,
+  ) => Effect.Effect<ChatAttachment, AttachmentWriteError>;
   /** HTTP client for built-in credential probes. Defaults to the fetch-backed client. */
   readonly httpClient?: HttpClient.HttpClient;
   /**

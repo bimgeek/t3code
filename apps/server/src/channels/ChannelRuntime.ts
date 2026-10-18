@@ -4,11 +4,14 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FiberSet from "effect/FiberSet";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { writeAttachment } from "../attachmentStore.ts";
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
@@ -176,8 +179,9 @@ export class ChannelRuntime extends Context.Service<ChannelRuntime, ChannelRunti
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
       const settings = yield* ServerSettingsService;
       const crypto = yield* Crypto.Crypto;
-      const serverConfig = yield* Effect.serviceOption(ServerConfig.ServerConfig);
-      const publicOrigin = Option.getOrUndefined(serverConfig)?.publicOrigin;
+      const { attachmentsDir, publicOrigin } = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
 
       return ChannelRuntime.layerWith({
         ...(publicOrigin ? { publicOrigin } : {}),
@@ -192,6 +196,11 @@ export class ChannelRuntime extends Context.Service<ChannelRuntime, ChannelRunti
             .pipe(Effect.map(Option.getOrNull)),
         nowIso: DateTime.now.pipe(Effect.map(DateTime.formatIso)),
         randomUuid: crypto.randomUUIDv4,
+        writeAttachment: (attachment, bytes) =>
+          writeAttachment({ attachmentsDir, attachment, bytes }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+          ),
       });
     }),
   );

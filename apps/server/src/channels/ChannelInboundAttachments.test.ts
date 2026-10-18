@@ -187,4 +187,57 @@ describe("files shared in channel messages", () => {
       expect(NodeFS.readdirSync(harness.attachmentsDir)).toEqual([`${first?.[0]?.id}.png`]);
     }),
   );
+
+  it.effect("names files it could not attach and still starts the turn", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({});
+
+      yield* dispatchInboundChannelMessage(harness.dependencies, {
+        botId: BOT_ID,
+        projectId: PROJECT_ID,
+        provider: "discord",
+        externalThreadId: "discord:G1:C1:T1",
+        externalMessageId: "discord-files-1",
+        text: "",
+        attachments: [
+          {
+            name: "broken.png",
+            mimeType: "image/png",
+            fetch: async () => {
+              throw new Error("connection reset");
+            },
+          },
+          { name: "linked.png", mimeType: "image/png", url: "https://cdn.example.com/linked.png" },
+          { name: "huge.pdf", mimeType: "application/pdf", sizeBytes: 11 * 1024 * 1024 },
+          { name: "notes.md", mimeType: "text/markdown", fetch: async () => new Uint8Array() },
+          ...Array.from({ length: 5 }, (_, index) => ({
+            name: `photo-${index + 5}.png`,
+            mimeType: "image/png",
+            fetch: async () => PNG_BYTES,
+          })),
+        ],
+      });
+
+      const turn = harness.commands.find(
+        (command): command is Extract<OrchestrationCommand, { type: "thread.turn.start" }> =>
+          command.type === "thread.turn.start",
+      );
+
+      expect(turn?.message.text).toBe(
+        [
+          '[Shared file "broken.png" was not attached: download failed]',
+          '[Shared file "linked.png" was not attached: no download available, https://cdn.example.com/linked.png]',
+          '[Shared file "huge.pdf" was not attached: larger than 10 MB]',
+          '[Shared file "notes.md" was not attached: the file is empty]',
+          '[Shared file "photo-9.png" was not attached: more than 8 files in one message]',
+        ].join("\n"),
+      );
+      expect(turn?.message.attachments.map((attachment) => attachment.name)).toEqual([
+        "photo-5.png",
+        "photo-6.png",
+        "photo-7.png",
+        "photo-8.png",
+      ]);
+    }),
+  );
 });
