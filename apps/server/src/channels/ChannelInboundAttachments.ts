@@ -26,14 +26,20 @@ const DOWNLOAD_CONCURRENCY = 4;
 
 const DOWNLOAD_TIMEOUT = "30 seconds";
 
+// The name is quoted inside the turn text, so a line break in it would forge a line of its own.
+const oneLineName = (name: string) =>
+  name
+    .replace(/[\p{Cc}\s]+/gu, " ")
+    .trim()
+    .slice(0, ATTACHMENT_NAME_MAX_CHARS)
+    .trim();
+
 export const inboundAttachments = (message: Message): ReadonlyArray<InboundChannelAttachment> =>
   message.attachments.map((attachment) => {
     const fetchData = attachment.fetchData;
 
     return {
-      name:
-        (attachment.name ?? "").trim().slice(0, ATTACHMENT_NAME_MAX_CHARS).trim() ||
-        attachment.type,
+      name: oneLineName(attachment.name ?? "") || attachment.type,
       ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
       ...(attachment.size !== undefined ? { sizeBytes: attachment.size } : {}),
       ...(attachment.url ? { url: attachment.url } : {}),

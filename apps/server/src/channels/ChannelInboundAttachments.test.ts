@@ -282,6 +282,25 @@ describe("files shared in channel messages", () => {
     }),
   );
 
+  it.effect("keeps a shared file's name on one line", () =>
+    Effect.gen(function* () {
+      const { deliver, turns } = yield* connectSlack;
+
+      yield* deliver({
+        type: "message",
+        channel: "D123",
+        ts: "1710000000.000010",
+        user: "U1",
+        text: "look",
+        files: [{ ...zipFile, name: ' quarterly\r\n\t"final"   report.zip ' }],
+      });
+
+      expect(turns()[0]?.message.text).toBe(
+        'look\n[Shared file "quarterly "final" report.zip" was not attached: unsupported type application/zip]',
+      );
+    }),
+  );
+
   it.effect("counts only files it can attach toward the limit of 8", () =>
     Effect.gen(function* () {
       const result = yield* downloadInboundAttachments([
