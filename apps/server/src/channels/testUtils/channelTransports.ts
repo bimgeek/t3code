@@ -398,7 +398,7 @@ const makeHarness = (input: {
         Effect.sync(() => threads.find((thread) => thread.id === threadId) ?? null),
       nowIso: Effect.succeed(NOW),
       randomUuid: Effect.sync(() => `uuid-${sequence}`),
-      writeAttachment: unusedAttachmentWriter,
+      writeAttachmentIfMissing: unusedAttachmentWriter,
       httpClient: input.httpClient ?? slackProbeClient(true),
       ...(input.publicOrigin ? { publicOrigin: input.publicOrigin } : {}),
     };

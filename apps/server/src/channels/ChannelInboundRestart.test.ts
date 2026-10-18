@@ -71,7 +71,7 @@ const makeDependencies = Effect.fn("makeDependencies")(function* (now: string) {
       snapshots.getThreadDetailById(threadId).pipe(Effect.map(Option.getOrNull)),
     nowIso: Effect.succeed(now),
     randomUuid: Effect.sync(() => NodeCrypto.randomUUID()),
-    writeAttachment: () => Effect.die("These inbound messages share no files."),
+    writeAttachmentIfMissing: () => Effect.die("These inbound messages share no files."),
     deliveryStore: memoryChannelDeliveryStore(),
     secretStore: {
       get: () => Effect.die("Inbound dispatch must not read secrets."),

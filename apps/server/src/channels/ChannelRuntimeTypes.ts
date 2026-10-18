@@ -127,6 +127,8 @@ export interface DownloadedChannelFile {
   readonly name: string;
   readonly kind: DownloadedChannelFileKind;
   readonly bytes: Uint8Array;
+  /** Hex SHA-256 of `bytes`. */
+  readonly contentHash: string;
 }
 
 export interface DownloadedChannelAttachments {
@@ -178,7 +180,7 @@ export interface ChannelRuntimeDependencies {
   ) => Effect.Effect<OrchestrationThread | null, ProjectionRepositoryError>;
   readonly nowIso: Effect.Effect<string>;
   readonly randomUuid: Effect.Effect<string, PlatformError.PlatformError>;
-  readonly writeAttachment: (
+  readonly writeAttachmentIfMissing: (
     attachment: AttachmentToWrite,
     bytes: Uint8Array,
   ) => Effect.Effect<ChatAttachment, AttachmentWriteError>;

@@ -28,6 +28,10 @@ import {
 
 const PNG_BYTES = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
+const PNG_SHA256 = "4c4b6a3be1314ab86138bef4314dde022e600960d8689a2c8f8631802d20dab6";
+
+const PLAIN_NOTES_SHA256 = "44eff743ca3bef7f4c8c8ec5ba1c7dc401ba89a6caf50e73b4d7e0695ae10bab";
+
 type SlackFile = NonNullable<SlackEvent["files"]>[number];
 
 const pngFile: SlackFile = {
@@ -188,7 +192,7 @@ describe("files shared in channel messages", () => {
     }),
   );
 
-  it.effect("writes the same attachment when a message is delivered again", () =>
+  it.effect("keeps the stored file when a message is delivered again", () =>
     Effect.gen(function* () {
       const harness = makeHarness({});
 
@@ -210,7 +214,14 @@ describe("files shared in channel messages", () => {
       };
 
       yield* dispatchShared(harness.dependencies, inbound);
-      yield* dispatchShared(harness.dependencies, inbound);
+      const [stored] = NodeFS.readdirSync(harness.attachmentsDir);
+      const storedPath = `${harness.attachmentsDir}/${stored}`;
+      const { ino } = NodeFS.statSync(storedPath);
+      const openReader = NodeFS.openSync(storedPath, "r");
+
+      yield* dispatchShared(harness.dependencies, inbound).pipe(
+        Effect.ensuring(Effect.sync(() => NodeFS.closeSync(openReader))),
+      );
 
       const turns = harness.commands.filter((command) => command.type === "thread.turn.start");
       const [first, second] = turns.map((turn) => turn.message.attachments);
@@ -219,6 +230,7 @@ describe("files shared in channel messages", () => {
       expect(first).toHaveLength(1);
       expect(second).toEqual(first);
       expect(NodeFS.readdirSync(harness.attachmentsDir)).toEqual([`${first?.[0]?.id}.png`]);
+      expect(NodeFS.statSync(storedPath).ino).toBe(ino);
     }),
   );
 
@@ -281,7 +293,14 @@ describe("files shared in channel messages", () => {
       ]);
 
       expect(result).toEqual({
-        files: [{ name: "notes.txt", kind: { type: "file", mimeType: "text/plain" }, bytes }],
+        files: [
+          {
+            name: "notes.txt",
+            kind: { type: "file", mimeType: "text/plain" },
+            bytes,
+            contentHash: PLAIN_NOTES_SHA256,
+          },
+        ],
         notes: [],
       });
     }),
@@ -395,7 +414,12 @@ describe("files shared in channel messages", () => {
 
       expect(yield* Fiber.join(fiber)).toEqual({
         files: [
-          { name: "quick.png", kind: { type: "image", mimeType: "image/png" }, bytes: PNG_BYTES },
+          {
+            name: "quick.png",
+            kind: { type: "image", mimeType: "image/png" },
+            bytes: PNG_BYTES,
+            contentHash: PNG_SHA256,
+          },
         ],
         notes: ['[Shared file "stalled.png" was not attached: download failed]'],
       });
@@ -408,7 +432,7 @@ describe("files shared in channel messages", () => {
 
       const dependencies: ChannelRuntimeDependencies = {
         ...harness.dependencies,
-        writeAttachment: (attachment) =>
+        writeAttachmentIfMissing: (attachment) =>
           Effect.fail(new AttachmentWriteError({ attachmentId: attachment.id })),
       };
 

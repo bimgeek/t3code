@@ -11,7 +11,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { writeAttachment } from "../attachmentStore.ts";
+import { writeAttachmentIfMissing } from "../attachmentStore.ts";
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
@@ -196,8 +196,8 @@ export class ChannelRuntime extends Context.Service<ChannelRuntime, ChannelRunti
             .pipe(Effect.map(Option.getOrNull)),
         nowIso: DateTime.now.pipe(Effect.map(DateTime.formatIso)),
         randomUuid: crypto.randomUUIDv4,
-        writeAttachment: (attachment, bytes) =>
-          writeAttachment({ attachmentsDir, attachment, bytes }).pipe(
+        writeAttachmentIfMissing: (attachment, bytes) =>
+          writeAttachmentIfMissing({ attachmentsDir, attachment, bytes }).pipe(
             Effect.provideService(FileSystem.FileSystem, fileSystem),
             Effect.provideService(Path.Path, path),
           ),

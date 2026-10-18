@@ -150,7 +150,14 @@ const download = Effect.fn("downloadChannelFile")(function* (planned: Download) 
 
   if (bytes.value.byteLength > planned.maxBytes) return tooLarge(name, planned.maxBytes);
 
-  return { file: { name, kind: planned.kind, bytes: bytes.value } };
+  return {
+    file: {
+      name,
+      kind: planned.kind,
+      bytes: bytes.value,
+      contentHash: NodeCrypto.createHash("sha256").update(bytes.value).digest("hex"),
+    },
+  };
 });
 
 export const downloadInboundAttachments = Effect.fn("downloadInboundAttachments")(function* (
@@ -182,16 +189,18 @@ const saveFile = Effect.fn("saveChannelFile")(function* (
 
   if (!id) return notAttached(name, "it could not be saved");
 
-  const saved = yield* ctx.deps.writeAttachment({ ...file.kind, id, name }, file.bytes).pipe(
-    Effect.tapError((cause) =>
-      Effect.logWarning("Failed to save a file shared in a channel message.", {
-        threadId,
-        name,
-        cause,
-      }),
-    ),
-    Effect.option,
-  );
+  const saved = yield* ctx.deps
+    .writeAttachmentIfMissing({ ...file.kind, id, name }, file.bytes)
+    .pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("Failed to save a file shared in a channel message.", {
+          threadId,
+          name,
+          cause,
+        }),
+      ),
+      Effect.option,
+    );
 
   return Option.isSome(saved)
     ? { attachment: saved.value }

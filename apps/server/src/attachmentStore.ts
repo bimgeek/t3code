@@ -215,25 +215,50 @@ export const writeFileAtomically = Effect.fn("writeFileAtomically")(function* (
   }).pipe(Effect.tapError(() => fileSystem.remove(partPath, { force: true }).pipe(Effect.ignore)));
 });
 
+const attachmentWrite = (input: {
+  readonly attachmentsDir: string;
+  readonly attachment: AttachmentToWrite;
+  readonly bytes: Uint8Array;
+}) => {
+  const attachment: ChatAttachment = { ...input.attachment, sizeBytes: input.bytes.byteLength };
+
+  return {
+    attachment,
+    path: resolveAttachmentPath({ attachmentsDir: input.attachmentsDir, attachment }),
+    fail: (cause?: unknown) => new AttachmentWriteError({ attachmentId: attachment.id, cause }),
+  };
+};
+
 export const writeAttachment = Effect.fn("writeAttachment")(function* (input: {
   readonly attachmentsDir: string;
   readonly attachment: AttachmentToWrite;
   readonly bytes: Uint8Array;
 }) {
-  const attachment: ChatAttachment = { ...input.attachment, sizeBytes: input.bytes.byteLength };
+  const { attachment, path, fail } = attachmentWrite(input);
 
-  const attachmentPath = resolveAttachmentPath({
-    attachmentsDir: input.attachmentsDir,
-    attachment,
-  });
+  if (!path) return yield* fail();
+  yield* writeFileAtomically(path, input.bytes).pipe(Effect.mapError(fail));
 
-  if (!attachmentPath) {
-    return yield* new AttachmentWriteError({ attachmentId: attachment.id });
+  return attachment;
+});
+
+/**
+ * For an id derived from the bytes, where a file already at that id holds the same bytes.
+ * Renaming over a file that another process has open fails on Windows.
+ */
+export const writeAttachmentIfMissing = Effect.fn("writeAttachmentIfMissing")(function* (input: {
+  readonly attachmentsDir: string;
+  readonly attachment: AttachmentToWrite;
+  readonly bytes: Uint8Array;
+}) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const { attachment, path, fail } = attachmentWrite(input);
+
+  if (!path) return yield* fail();
+
+  if (!(yield* fileSystem.exists(path).pipe(Effect.mapError(fail)))) {
+    yield* writeFileAtomically(path, input.bytes).pipe(Effect.mapError(fail));
   }
-
-  yield* writeFileAtomically(attachmentPath, input.bytes).pipe(
-    Effect.mapError((cause) => new AttachmentWriteError({ attachmentId: attachment.id, cause })),
-  );
 
   return attachment;
 });

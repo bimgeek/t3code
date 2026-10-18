@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import { afterEach } from "vite-plus/test";
-import { writeAttachment } from "../../attachmentStore.ts";
+import { writeAttachmentIfMissing } from "../../attachmentStore.ts";
 import { type ChannelRuntimeDependencies } from "../ChannelRuntimeTypes.ts";
 
 const attachmentsDirs = new Set<string>();
@@ -22,11 +22,13 @@ export const makeAttachmentsDir = () => {
 };
 
 export const attachmentWriterFor =
-  (attachmentsDir: string): ChannelRuntimeDependencies["writeAttachment"] =>
+  (attachmentsDir: string): ChannelRuntimeDependencies["writeAttachmentIfMissing"] =>
   (attachment, bytes) =>
-    writeAttachment({ attachmentsDir, attachment, bytes }).pipe(Effect.provide(NodeServices.layer));
+    writeAttachmentIfMissing({ attachmentsDir, attachment, bytes }).pipe(
+      Effect.provide(NodeServices.layer),
+    );
 
-export const unusedAttachmentWriter: ChannelRuntimeDependencies["writeAttachment"] = () =>
+export const unusedAttachmentWriter: ChannelRuntimeDependencies["writeAttachmentIfMissing"] = () =>
   Effect.die("unused attachment writer");
 
 afterEach(() => {
