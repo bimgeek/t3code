@@ -1,4 +1,6 @@
+import { DiscordFormatConverter } from "@chat-adapter/discord";
 import { createSlackAdapter, type SlackEvent } from "@chat-adapter/slack";
+import { Message } from "chat";
 import { describe, expect, it } from "vite-plus/test";
 import { makeChatSdkMessage } from "./testUtils/channelRuntime.ts";
 import { mentionWithContext, normalizedInboundMessage } from "./ChannelInbound.ts";
@@ -57,6 +59,41 @@ describe("inbound channel message text", () => {
     const message = makeChatSdkMessage("telegram:1", "m-1", original, "U1");
 
     expect(normalizedInboundMessage(thread(), message).text).toBe(original);
+  });
+
+  it("writes a Slack link once when only a trailing slash differs from its label", () => {
+    const message = slackMessage(
+      "1710000000.000006",
+      "U1",
+      "open <https://example.com/|https://example.com> or <https://example.com/a|example.com/a/>",
+    );
+
+    expect(normalizedInboundMessage(thread(), message).text).toBe(
+      "open https://example.com or example.com/a/",
+    );
+  });
+
+  it("keeps the markdown a Discord gateway message arrives with", () => {
+    const content = [
+      "Run this, then read [docs](https://e.com):",
+      "```ts",
+      "const snake_case = `value`;",
+      "```",
+      "1. first __step__",
+    ].join("\n");
+
+    const message = new Message({
+      id: "discord-1",
+      threadId: "discord:G1:C1:T1",
+      text: content,
+      formatted: new DiscordFormatConverter().toAst(content),
+      raw: {},
+      author: { userId: "D1", userName: "d1", fullName: "D1", isBot: false, isMe: false },
+      metadata: { dateSent: new Date(0), edited: false },
+      attachments: [],
+    });
+
+    expect(normalizedInboundMessage(thread(), message).text).toBe(content);
   });
 
   it("keeps link targets in mention context lines and in the mention", async () => {

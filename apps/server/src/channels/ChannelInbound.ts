@@ -66,17 +66,20 @@ export const deterministicChannelId = (
     )
     .digest("hex")}`;
 
+const withoutTrailingSlash = (value: string) => value.replace(/\/$/, "");
+
 /**
- * The SDK's `message.text` keeps only a link's label, so a Slack link labelled
- * `example.com/projects/…` would reach the bot without its target.
+ * Slack's adapter flattens `message.text` to plain text that keeps only a link's label, so a link
+ * labelled `example.com/projects/…` would reach the bot without its target. Adapters that pass raw
+ * markdown through (Discord's gateway, Telegram, WhatsApp, iMessage) already carry the target.
  */
 export function plainTextWithLinks(message: Message): string {
+  if (message.text !== toPlainText(message.formatted)) return message.text;
   let addedTarget = false;
 
   const ast = walkAst(structuredClone(message.formatted), (node) => {
     if (!isLinkNode(node)) return node;
     const label = toPlainText({ type: "root", children: node.children }).trim();
-    const bare = node.url.replace(/^(?:https?:\/\/|mailto:)/, "");
 
     if (!label) {
       addedTarget = true;
@@ -84,7 +87,9 @@ export function plainTextWithLinks(message: Message): string {
       return text(node.url);
     }
 
-    if (label === node.url || label === bare || label === bare.replace(/\/$/, ""))
+    const targets = [node.url, node.url.replace(/^(?:https?:\/\/|mailto:)/, "")];
+
+    if (targets.some((target) => withoutTrailingSlash(target) === withoutTrailingSlash(label)))
       return text(label);
     addedTarget = true;
 
