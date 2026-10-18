@@ -3,17 +3,28 @@ import {
   dispatchInboundChannelMessage,
   BOT_ID,
   PROJECT_ID,
+  makeBot,
   makeHarness,
   slackConnect,
+  telegramConnect,
   externalAdapters,
 } from "./testUtils/channelRuntime.ts";
 import * as NodeFS from "node:fs";
 import { type SlackEvent } from "@chat-adapter/slack";
-import { type OrchestrationCommand } from "@akeru/contracts";
+import { BotId, type OrchestrationCommand } from "@akeru/contracts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import { it } from "@effect/vitest";
 import { describe, expect } from "vite-plus/test";
-import { resolveAttachmentPathById } from "../attachmentStore.ts";
+import { AttachmentWriteError, resolveAttachmentPathById } from "../attachmentStore.ts";
+import { type InboundDispatchInput } from "./ChannelInbound.ts";
+import { downloadInboundAttachments } from "./ChannelInboundAttachments.ts";
+import {
+  type ChannelRuntimeDependencies,
+  type InboundCallback,
+  type InboundChannelAttachment,
+} from "./ChannelRuntimeTypes.ts";
 
 const PNG_BYTES = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -66,6 +77,25 @@ const connectSlack = Effect.gen(function* () {
 
   return { harness, deliver, downloads, turns };
 });
+
+/** Downloads and dispatches the way a connected transport does, around the provider lock. */
+const dispatchShared = (
+  dependencies: ChannelRuntimeDependencies,
+  input: Omit<InboundDispatchInput, "attachments"> & {
+    readonly attachments: ReadonlyArray<InboundChannelAttachment>;
+  },
+) =>
+  downloadInboundAttachments(input.attachments).pipe(
+    Effect.flatMap((attachments) =>
+      dispatchInboundChannelMessage(dependencies, { ...input, attachments }),
+    ),
+  );
+
+const turnStarts = (commands: ReadonlyArray<OrchestrationCommand>) =>
+  commands.filter(
+    (command): command is Extract<OrchestrationCommand, { type: "thread.turn.start" }> =>
+      command.type === "thread.turn.start",
+  );
 
 const storedBytes = (attachmentsDir: string, attachmentId: string) => {
   const path = resolveAttachmentPathById({ attachmentsDir, attachmentId });
@@ -174,8 +204,8 @@ describe("files shared in channel messages", () => {
         ],
       };
 
-      yield* dispatchInboundChannelMessage(harness.dependencies, inbound);
-      yield* dispatchInboundChannelMessage(harness.dependencies, inbound);
+      yield* dispatchShared(harness.dependencies, inbound);
+      yield* dispatchShared(harness.dependencies, inbound);
 
       const turns = harness.commands.filter((command) => command.type === "thread.turn.start");
       const [first, second] = turns.map((turn) => turn.message.attachments);
@@ -191,7 +221,7 @@ describe("files shared in channel messages", () => {
     Effect.gen(function* () {
       const harness = makeHarness({});
 
-      yield* dispatchInboundChannelMessage(harness.dependencies, {
+      yield* dispatchShared(harness.dependencies, {
         botId: BOT_ID,
         projectId: PROJECT_ID,
         provider: "discord",
@@ -217,10 +247,7 @@ describe("files shared in channel messages", () => {
         ],
       });
 
-      const turn = harness.commands.find(
-        (command): command is Extract<OrchestrationCommand, { type: "thread.turn.start" }> =>
-          command.type === "thread.turn.start",
-      );
+      const [turn] = turnStarts(harness.commands);
 
       expect(turn?.message.text).toBe(
         [
@@ -236,6 +263,185 @@ describe("files shared in channel messages", () => {
         "photo-6.png",
         "photo-7.png",
         "photo-8.png",
+      ]);
+    }),
+  );
+
+  it.effect("stores each shared file under its own id", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({});
+
+      yield* dispatchShared(harness.dependencies, {
+        botId: BOT_ID,
+        projectId: PROJECT_ID,
+        provider: "telegram",
+        externalThreadId: "telegram:files",
+        externalMessageId: "telegram-files-1",
+        text: "three files",
+        attachments: ["one", "two", "three"].map((label) => ({
+          name: `${label}.txt`,
+          mimeType: "text/plain",
+          fetch: async () => new TextEncoder().encode(label),
+        })),
+      });
+
+      const attachments = turnStarts(harness.commands)[0]?.message.attachments ?? [];
+
+      expect(attachments.map((attachment) => attachment.name)).toEqual([
+        "one.txt",
+        "two.txt",
+        "three.txt",
+      ]);
+      expect(new Set(attachments.map((attachment) => attachment.id)).size).toBe(3);
+      expect(NodeFS.readdirSync(harness.attachmentsDir)).toHaveLength(3);
+      expect(
+        attachments.map((attachment) =>
+          new TextDecoder().decode(
+            storedBytes(harness.attachmentsDir, attachment.id) ?? new Uint8Array(),
+          ),
+        ),
+      ).toEqual(["one", "two", "three"]);
+    }),
+  );
+
+  it.effect("names a download that turns out larger than its declared size", () =>
+    Effect.gen(function* () {
+      const result = yield* downloadInboundAttachments([
+        {
+          name: "growing.png",
+          mimeType: "image/png",
+          sizeBytes: 8,
+          fetch: async () => new Uint8Array(10 * 1024 * 1024 + 1),
+        },
+      ]);
+
+      expect(result).toEqual({
+        files: [],
+        notes: ['[Shared file "growing.png" was not attached: larger than 10 MB]'],
+      });
+    }),
+  );
+
+  it.effect("names a file whose download does not finish within 30 seconds", () =>
+    Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(
+        downloadInboundAttachments([
+          { name: "stalled.png", mimeType: "image/png", fetch: () => new Promise(() => {}) },
+          { name: "quick.png", mimeType: "image/png", fetch: async () => PNG_BYTES },
+        ]),
+      );
+
+      yield* TestClock.adjust("30 seconds");
+
+      expect(yield* Fiber.join(fiber)).toEqual({
+        files: [
+          { name: "quick.png", kind: { type: "image", mimeType: "image/png" }, bytes: PNG_BYTES },
+        ],
+        notes: ['[Shared file "stalled.png" was not attached: download failed]'],
+      });
+    }),
+  );
+
+  it.effect("names a file it could not save and still starts the turn", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({});
+
+      const dependencies: ChannelRuntimeDependencies = {
+        ...harness.dependencies,
+        writeAttachment: (attachment) =>
+          Effect.fail(new AttachmentWriteError({ attachmentId: attachment.id })),
+      };
+
+      yield* dispatchShared(dependencies, {
+        botId: BOT_ID,
+        projectId: PROJECT_ID,
+        provider: "slack",
+        externalThreadId: "slack:D123:1710000000.000009",
+        externalMessageId: "1710000000.000009",
+        text: "can you see this?",
+        attachments: [{ name: "shot.png", mimeType: "image/png", fetch: async () => PNG_BYTES }],
+      });
+
+      const [turn] = turnStarts(harness.commands);
+
+      expect(turn?.message.text).toBe(
+        'can you see this?\n[Shared file "shot.png" was not attached: it could not be saved]',
+      );
+      expect(turn?.message.attachments).toEqual([]);
+    }),
+  );
+
+  it.effect("lets another bot on the same provider reply while a file downloads", () =>
+    Effect.gen(function* () {
+      const otherBotId = BotId.make("bot-other");
+      const callbacks = new Map<string, InboundCallback>();
+
+      const harness = makeHarness({
+        bots: [makeBot(BOT_ID), makeBot(otherBotId)],
+        startTransport: async (input, onInbound) => {
+          callbacks.set(input.botId, onInbound);
+
+          return {
+            externalIdentity: "@akeru",
+            runtime: { post: async () => undefined, shutdown: async () => undefined },
+          };
+        },
+      });
+
+      yield* connectChannel(harness.dependencies, telegramConnect(BOT_ID));
+      yield* connectChannel(
+        harness.dependencies,
+        telegramConnect(otherBotId, "other-telegram-token"),
+      );
+
+      const downloadStarted = Promise.withResolvers<void>();
+      const releaseDownload = Promise.withResolvers<void>();
+
+      const slowFile = yield* Effect.forkChild(
+        Effect.promise(async () =>
+          callbacks.get(BOT_ID)?.({
+            externalThreadId: "telegram:slow",
+            externalMessageId: "slow-1",
+            text: "big photo",
+            attachments: [
+              {
+                name: "photo.png",
+                mimeType: "image/png",
+                fetch: async () => {
+                  downloadStarted.resolve();
+                  await releaseDownload.promise;
+
+                  return PNG_BYTES;
+                },
+              },
+            ],
+          }),
+        ),
+      );
+
+      yield* Effect.promise(() => downloadStarted.promise);
+      yield* Effect.promise(async () =>
+        callbacks.get(otherBotId)?.({
+          externalThreadId: "telegram:quick",
+          externalMessageId: "quick-1",
+          text: "hello",
+          attachments: [],
+        }),
+      );
+
+      expect(turnStarts(harness.commands).map((turn) => turn.message.text)).toEqual(["hello"]);
+
+      releaseDownload.resolve();
+      yield* Fiber.join(slowFile);
+
+      expect(
+        turnStarts(harness.commands).map((turn) => [
+          turn.message.text,
+          turn.message.attachments.map((attachment) => attachment.name),
+        ]),
+      ).toEqual([
+        ["hello", []],
+        ["big photo", ["photo.png"]],
       ]);
     }),
   );

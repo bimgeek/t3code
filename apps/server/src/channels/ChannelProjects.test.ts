@@ -75,7 +75,7 @@ describe("channel runtime", () => {
 
       yield* expectFailureMessage(
         dispatchInboundChannelMessage(harness.dependencies, {
-          attachments: [],
+          attachments: { files: [], notes: [] },
           botId: BOT_ID,
           projectId: MISSING_PROJECT_ID,
           provider: "telegram",

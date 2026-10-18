@@ -146,7 +146,7 @@ describe("channel inbound persistence across restart", () => {
           const dbPath = path.join(root, "state.sqlite");
 
           const input = {
-            attachments: [],
+            attachments: { files: [], notes: [] },
             botId: BOT_ID,
             projectId: TARGET_PROJECT_ID,
             provider,

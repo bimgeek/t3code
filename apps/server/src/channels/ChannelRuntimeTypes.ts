@@ -14,6 +14,8 @@ import {
   type ServerSettingsError,
   type OrchestrationReadModel,
   type OrchestrationThread,
+  type PROVIDER_SEND_TURN_SUPPORTED_FILE_MIME_TYPES,
+  type PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
 } from "@akeru/contracts";
 import * as Effect from "effect/Effect";
 import type * as PlatformError from "effect/PlatformError";
@@ -105,10 +107,32 @@ export interface StartedChannel {
 
 export interface InboundChannelAttachment {
   readonly name: string;
-  readonly mimeType: string;
+  readonly mimeType?: string;
   readonly sizeBytes?: number;
   readonly url?: string;
   readonly fetch?: () => Promise<Uint8Array>;
+}
+
+export type DownloadedChannelFileKind =
+  | {
+      readonly type: "image";
+      readonly mimeType: (typeof PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES)[number];
+    }
+  | {
+      readonly type: "file";
+      readonly mimeType: (typeof PROVIDER_SEND_TURN_SUPPORTED_FILE_MIME_TYPES)[number];
+    };
+
+export interface DownloadedChannelFile {
+  readonly name: string;
+  readonly kind: DownloadedChannelFileKind;
+  readonly bytes: Uint8Array;
+}
+
+/** A message's shared files after download, with a note for each file the bot will not receive. */
+export interface DownloadedChannelAttachments {
+  readonly files: ReadonlyArray<DownloadedChannelFile>;
+  readonly notes: ReadonlyArray<string>;
 }
 
 export interface InboundChannelMessage {

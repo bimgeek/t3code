@@ -14,10 +14,17 @@ import * as Option from "effect/Option";
 import { deterministicAttachmentId } from "../attachmentStore.ts";
 import {
   type ChannelRuntimeContext,
+  type DownloadedChannelAttachments,
+  type DownloadedChannelFile,
+  type DownloadedChannelFileKind,
   type InboundChannelAttachment,
 } from "./ChannelRuntimeTypes.ts";
 
 const ATTACHMENT_NAME_MAX_CHARS = 255;
+
+const DOWNLOAD_CONCURRENCY = 4;
+
+const DOWNLOAD_TIMEOUT = "30 seconds";
 
 export const inboundAttachments = (message: Message): ReadonlyArray<InboundChannelAttachment> =>
   message.attachments.map((attachment) => {
@@ -27,15 +34,23 @@ export const inboundAttachments = (message: Message): ReadonlyArray<InboundChann
       name:
         (attachment.name ?? "").trim().slice(0, ATTACHMENT_NAME_MAX_CHARS).trim() ||
         attachment.type,
-      mimeType: attachment.mimeType ?? "",
+      ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
       ...(attachment.size !== undefined ? { sizeBytes: attachment.size } : {}),
       ...(attachment.url ? { url: attachment.url } : {}),
-      ...(fetchData ? { fetch: async () => new Uint8Array(await fetchData()) } : {}),
+      ...(fetchData
+        ? {
+            fetch: async () => {
+              const data = await fetchData();
+
+              return data instanceof Uint8Array ? data : new Uint8Array(data);
+            },
+          }
+        : {}),
     };
   });
 
-const supportedKind = (mimeType: string) => {
-  const normalized = mimeType.toLowerCase();
+const supportedKind = (mimeType: string | undefined) => {
+  const normalized = (mimeType ?? "").toLowerCase();
   const image = PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES.find((type) => type === normalized);
 
   if (image) {
@@ -57,19 +72,25 @@ const supportedKind = (mimeType: string) => {
 
 const megabytes = (bytes: number) => `${bytes / 1024 / 1024} MB`;
 
-type AttachmentOutcome = { readonly attachment: ChatAttachment } | { readonly note: string };
+interface Note {
+  readonly note: string;
+}
 
-const notAttached = (name: string, reason: string): AttachmentOutcome => ({
+interface Download {
+  readonly name: string;
+  readonly kind: DownloadedChannelFileKind;
+  readonly maxBytes: number;
+  readonly fetch: () => Promise<Uint8Array>;
+}
+
+const notAttached = (name: string, reason: string): Note => ({
   note: `[Shared file "${name}" was not attached: ${reason}]`,
 });
 
-const persistAttachment = Effect.fn("persistAttachment")(function* (
-  ctx: ChannelRuntimeContext,
-  threadId: ThreadId,
-  messageId: MessageId,
-  inbound: InboundChannelAttachment,
-  index: number,
-) {
+const tooLarge = (name: string, maxBytes: number) =>
+  notAttached(name, `larger than ${megabytes(maxBytes)}`);
+
+const planDownload = (inbound: InboundChannelAttachment, index: number): Note | Download => {
   const { name } = inbound;
 
   if (index >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
@@ -81,11 +102,9 @@ const persistAttachment = Effect.fn("persistAttachment")(function* (
 
   const supported = supportedKind(inbound.mimeType);
 
-  if (!supported) return notAttached(name, `unsupported type ${inbound.mimeType || "unknown"}`);
+  if (!supported) return notAttached(name, `unsupported type ${inbound.mimeType ?? "unknown"}`);
 
-  const tooLarge = `larger than ${megabytes(supported.maxBytes)}`;
-
-  if ((inbound.sizeBytes ?? 0) > supported.maxBytes) return notAttached(name, tooLarge);
+  if ((inbound.sizeBytes ?? 0) > supported.maxBytes) return tooLarge(name, supported.maxBytes);
 
   if (!inbound.fetch) {
     return notAttached(
@@ -94,14 +113,16 @@ const persistAttachment = Effect.fn("persistAttachment")(function* (
     );
   }
 
-  const id = deterministicAttachmentId(threadId, `${messageId}\0${index}`);
+  return { name, kind: supported.kind, maxBytes: supported.maxBytes, fetch: inbound.fetch };
+};
 
-  if (!id) return notAttached(name, "it could not be saved");
+const download = Effect.fn("downloadChannelFile")(function* (planned: Download) {
+  const { name } = planned;
 
-  const bytes = yield* Effect.tryPromise(inbound.fetch).pipe(
+  const bytes = yield* Effect.tryPromise(planned.fetch).pipe(
+    Effect.timeout(DOWNLOAD_TIMEOUT),
     Effect.tapError((cause) =>
       Effect.logWarning("Failed to download a file shared in a channel message.", {
-        threadId,
         name,
         cause,
       }),
@@ -113,9 +134,41 @@ const persistAttachment = Effect.fn("persistAttachment")(function* (
 
   if (bytes.value.byteLength === 0) return notAttached(name, "the file is empty");
 
-  if (bytes.value.byteLength > supported.maxBytes) return notAttached(name, tooLarge);
+  if (bytes.value.byteLength > planned.maxBytes) return tooLarge(name, planned.maxBytes);
 
-  const saved = yield* ctx.deps.writeAttachment({ ...supported.kind, id, name }, bytes.value).pipe(
+  return { file: { name, kind: planned.kind, bytes: bytes.value } };
+});
+
+/** Applies the type, size, and count rules and downloads the files that pass them. */
+export const downloadInboundAttachments = Effect.fn("downloadInboundAttachments")(function* (
+  attachments: ReadonlyArray<InboundChannelAttachment>,
+) {
+  const outcomes = yield* Effect.forEach(
+    attachments.map(planDownload),
+    (planned): Effect.Effect<Note | { readonly file: DownloadedChannelFile }> =>
+      "note" in planned ? Effect.succeed(planned) : download(planned),
+    { concurrency: DOWNLOAD_CONCURRENCY },
+  );
+
+  return {
+    files: outcomes.flatMap((outcome) => ("file" in outcome ? [outcome.file] : [])),
+    notes: outcomes.flatMap((outcome) => ("note" in outcome ? [outcome.note] : [])),
+  } satisfies DownloadedChannelAttachments;
+});
+
+const saveFile = Effect.fn("saveChannelFile")(function* (
+  ctx: ChannelRuntimeContext,
+  threadId: ThreadId,
+  messageId: MessageId,
+  file: DownloadedChannelFile,
+  index: number,
+) {
+  const { name } = file;
+  const id = deterministicAttachmentId(threadId, `${messageId}\0${index}`);
+
+  if (!id) return notAttached(name, "it could not be saved");
+
+  const saved = yield* ctx.deps.writeAttachment({ ...file.kind, id, name }, file.bytes).pipe(
     Effect.tapError((cause) =>
       Effect.logWarning("Failed to save a file shared in a channel message.", {
         threadId,
@@ -131,24 +184,25 @@ const persistAttachment = Effect.fn("persistAttachment")(function* (
     : notAttached(name, "it could not be saved");
 });
 
-export const persistInboundAttachments = Effect.fn("persistInboundAttachments")(function* (
+/** Stores downloaded files under ids derived from the message, so a redelivery rewrites them. */
+export const saveDownloadedFiles = Effect.fn("saveDownloadedFiles")(function* (
   ctx: ChannelRuntimeContext,
   input: {
     readonly threadId: ThreadId;
     readonly messageId: MessageId;
-    readonly attachments: ReadonlyArray<InboundChannelAttachment>;
+    readonly files: ReadonlyArray<DownloadedChannelFile>;
   },
 ) {
   const outcomes = yield* Effect.forEach(
-    input.attachments,
-    (attachment, index) =>
-      persistAttachment(ctx, input.threadId, input.messageId, attachment, index),
+    input.files,
+    (file, index) => saveFile(ctx, input.threadId, input.messageId, file, index),
     { concurrency: 1 },
   );
 
   return {
-    attachments: outcomes.flatMap((outcome) =>
-      "attachment" in outcome ? [outcome.attachment] : [],
+    attachments: outcomes.flatMap(
+      (outcome): ReadonlyArray<ChatAttachment> =>
+        "attachment" in outcome ? [outcome.attachment] : [],
     ),
     notes: outcomes.flatMap((outcome) => ("note" in outcome ? [outcome.note] : [])),
   };

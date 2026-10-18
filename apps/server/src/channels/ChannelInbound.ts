@@ -13,8 +13,9 @@ import {
 import { isLinkNode, type Message, text, type Thread, toPlainText, walkAst } from "chat";
 import * as Effect from "effect/Effect";
 import { failWith } from "./ChannelErrors.ts";
-import { inboundAttachments, persistInboundAttachments } from "./ChannelInboundAttachments.ts";
+import { inboundAttachments, saveDownloadedFiles } from "./ChannelInboundAttachments.ts";
 import {
+  type DownloadedChannelAttachments,
   type InboundChannelMessage,
   type LiveProvider,
   type ChannelRuntimeContext,
@@ -192,10 +193,11 @@ export function channelBindingsForRuntime(
   );
 }
 
-export interface InboundDispatchInput extends InboundChannelMessage {
+export interface InboundDispatchInput extends Omit<InboundChannelMessage, "attachments"> {
   readonly botId: BotId;
   readonly projectId: ProjectId;
   readonly provider: LiveProvider;
+  readonly attachments: DownloadedChannelAttachments;
 }
 
 export const dispatchInboundChannelMessage = (
@@ -320,10 +322,10 @@ export const dispatchInboundChannelMessage = (
           : yield* randomId(ctx, "channel-message"),
       );
 
-      const { attachments, notes } = yield* persistInboundAttachments(ctx, {
+      const { attachments, notes } = yield* saveDownloadedFiles(ctx, {
         threadId,
         messageId,
-        attachments: input.attachments,
+        files: input.attachments.files,
       });
 
       yield* deps.engine.dispatch({
@@ -333,7 +335,9 @@ export const dispatchInboundChannelMessage = (
         message: {
           messageId,
           role: "user",
-          text: [input.text, ...notes].filter((part) => part.length > 0).join("\n"),
+          text: [input.text, ...input.attachments.notes, ...notes]
+            .filter((part) => part.length > 0)
+            .join("\n"),
           attachments,
           channelOrigin: {
             provider: input.provider,

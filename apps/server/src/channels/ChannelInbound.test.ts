@@ -51,7 +51,7 @@ describe("channel runtime", () => {
       const harness = makeHarness({});
 
       yield* dispatchInboundChannelMessage(harness.dependencies, {
-        attachments: [],
+        attachments: { files: [], notes: [] },
         botId: BOT_ID,
         projectId: SECOND_PROJECT_ID,
         provider: "telegram",
@@ -79,7 +79,7 @@ describe("channel runtime", () => {
       const harness = makeHarness({ threads: [makeThread(legacyThreadId, BOT_ID, [])] });
 
       yield* dispatchInboundChannelMessage(harness.dependencies, {
-        attachments: [],
+        attachments: { files: [], notes: [] },
         botId: BOT_ID,
         projectId: SECOND_PROJECT_ID,
         provider: "telegram",
@@ -112,7 +112,7 @@ describe("channel runtime", () => {
       const harness = makeHarness({ threads: [makeThread(legacyThreadId, BOT_ID, [])] });
 
       yield* dispatchInboundChannelMessage(harness.dependencies, {
-        attachments: [],
+        attachments: { files: [], notes: [] },
         botId: BOT_ID,
         projectId: PROJECT_ID,
         provider: "telegram",
@@ -135,7 +135,7 @@ describe("channel runtime", () => {
       const harness = makeHarness({});
 
       const input = {
-        attachments: [],
+        attachments: { files: [], notes: [] },
         botId: BOT_ID,
         projectId: PROJECT_ID,
         provider: "telegram" as const,
@@ -159,7 +159,7 @@ describe("channel runtime", () => {
       const harness = makeHarness({});
 
       yield* dispatchInboundChannelMessage(harness.dependencies, {
-        attachments: [],
+        attachments: { files: [], notes: [] },
         botId: BOT_ID,
         projectId: PROJECT_ID,
         provider: "telegram",
@@ -494,7 +494,7 @@ describe("channel runtime", () => {
 
       yield* expectFailureMessage(
         dispatchInboundChannelMessage(harness.dependencies, {
-          attachments: [],
+          attachments: { files: [], notes: [] },
           botId: BOT_ID,
           projectId: PROJECT_ID,
           provider: "telegram",
