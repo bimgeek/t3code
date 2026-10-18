@@ -13,12 +13,16 @@ import * as NodeFS from "node:fs";
 import { type SlackEvent } from "@chat-adapter/slack";
 import { BotId, type OrchestrationCommand } from "@akeru/contracts";
 import * as Effect from "effect/Effect";
+import * as Semaphore from "effect/Semaphore";
 import * as Fiber from "effect/Fiber";
 import { it } from "@effect/vitest";
 import { describe, expect } from "vite-plus/test";
 import { AttachmentWriteError, resolveAttachmentPathById } from "../attachmentStore.ts";
 import { type InboundDispatchInput, mentionWithContext } from "./ChannelInbound.ts";
-import { downloadInboundAttachments } from "./ChannelInboundAttachments.ts";
+import {
+  CHANNEL_DOWNLOAD_PERMITS,
+  downloadInboundAttachments,
+} from "./ChannelInboundAttachments.ts";
 import {
   type ChannelRuntimeDependencies,
   type InboundCallback,
@@ -89,7 +93,10 @@ const dispatchShared = (
     readonly attachments: ReadonlyArray<InboundChannelAttachment>;
   },
 ) =>
-  downloadInboundAttachments(input.attachments).pipe(
+  downloadInboundAttachments(
+    Semaphore.makeUnsafe(CHANNEL_DOWNLOAD_PERMITS),
+    input.attachments,
+  ).pipe(
     Effect.flatMap((attachments) =>
       dispatchInboundChannelMessage(dependencies, { ...input, attachments }),
     ),

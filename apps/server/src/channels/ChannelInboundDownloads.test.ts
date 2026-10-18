@@ -1,11 +1,16 @@
 import * as Effect from "effect/Effect";
+import * as Semaphore from "effect/Semaphore";
 import * as Fiber from "effect/Fiber";
 import * as Logger from "effect/Logger";
 import * as TestClock from "effect/testing/TestClock";
 import { it } from "@effect/vitest";
 import { Message as ChatMessage } from "chat";
 import { describe, expect } from "vite-plus/test";
-import { downloadInboundAttachments, inboundAttachments } from "./ChannelInboundAttachments.ts";
+import {
+  CHANNEL_DOWNLOAD_PERMITS,
+  downloadInboundAttachments,
+  inboundAttachments,
+} from "./ChannelInboundAttachments.ts";
 
 const PNG_BYTES = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -18,9 +23,10 @@ describe("downloading files shared in channel messages", () => {
     Effect.gen(function* () {
       const bytes = new TextEncoder().encode("plain notes");
 
-      const result = yield* downloadInboundAttachments([
-        { name: "notes.txt", mimeType: "Text/Plain; charset=utf-8", fetch: async () => bytes },
-      ]);
+      const result = yield* downloadInboundAttachments(
+        Semaphore.makeUnsafe(CHANNEL_DOWNLOAD_PERMITS),
+        [{ name: "notes.txt", mimeType: "Text/Plain; charset=utf-8", fetch: async () => bytes }],
+      );
 
       expect(result).toEqual({
         files: [
@@ -57,7 +63,10 @@ describe("downloading files shared in channel messages", () => {
         ],
       });
 
-      const downloaded = yield* downloadInboundAttachments(inboundAttachments(message));
+      const downloaded = yield* downloadInboundAttachments(
+        Semaphore.makeUnsafe(CHANNEL_DOWNLOAD_PERMITS),
+        inboundAttachments(message),
+      );
 
       expect(downloaded.notes).toEqual([
         `[Shared file "${"a".repeat(254)}😀" was not attached: no download available, https://example.com/a.png [Shared file was attached]]`,
@@ -68,14 +77,17 @@ describe("downloading files shared in channel messages", () => {
 
   it.effect("counts only files it can attach toward the limit of 8", () =>
     Effect.gen(function* () {
-      const result = yield* downloadInboundAttachments([
-        { name: "report.zip", mimeType: "application/zip", fetch: async () => PNG_BYTES },
-        ...Array.from({ length: 9 }, (_, index) => ({
-          name: `photo-${index + 1}.png`,
-          mimeType: "image/png",
-          fetch: async () => PNG_BYTES,
-        })),
-      ]);
+      const result = yield* downloadInboundAttachments(
+        Semaphore.makeUnsafe(CHANNEL_DOWNLOAD_PERMITS),
+        [
+          { name: "report.zip", mimeType: "application/zip", fetch: async () => PNG_BYTES },
+          ...Array.from({ length: 9 }, (_, index) => ({
+            name: `photo-${index + 1}.png`,
+            mimeType: "image/png",
+            fetch: async () => PNG_BYTES,
+          })),
+        ],
+      );
 
       expect(result.files.map((file) => file.name)).toEqual(
         Array.from({ length: 8 }, (_, index) => `photo-${index + 1}.png`),
@@ -89,14 +101,17 @@ describe("downloading files shared in channel messages", () => {
 
   it.effect("names a download that turns out larger than its declared size", () =>
     Effect.gen(function* () {
-      const result = yield* downloadInboundAttachments([
-        {
-          name: "growing.png",
-          mimeType: "image/png",
-          sizeBytes: 8,
-          fetch: async () => new Uint8Array(10 * 1024 * 1024 + 1),
-        },
-      ]);
+      const result = yield* downloadInboundAttachments(
+        Semaphore.makeUnsafe(CHANNEL_DOWNLOAD_PERMITS),
+        [
+          {
+            name: "growing.png",
+            mimeType: "image/png",
+            sizeBytes: 8,
+            fetch: async () => new Uint8Array(10 * 1024 * 1024 + 1),
+          },
+        ],
+      );
 
       expect(result).toEqual({
         files: [],
@@ -108,7 +123,7 @@ describe("downloading files shared in channel messages", () => {
   it.effect("names a file whose download does not finish within 30 seconds", () =>
     Effect.gen(function* () {
       const fiber = yield* Effect.forkChild(
-        downloadInboundAttachments([
+        downloadInboundAttachments(Semaphore.makeUnsafe(CHANNEL_DOWNLOAD_PERMITS), [
           { name: "stalled.png", mimeType: "image/png", fetch: () => new Promise(() => {}) },
           { name: "quick.png", mimeType: "image/png", fetch: async () => PNG_BYTES },
         ]),
@@ -136,7 +151,7 @@ describe("downloading files shared in channel messages", () => {
 
     return Effect.gen(function* () {
       const fiber = yield* Effect.forkChild(
-        downloadInboundAttachments([
+        downloadInboundAttachments(Semaphore.makeUnsafe(CHANNEL_DOWNLOAD_PERMITS), [
           {
             name: "denied.png",
             mimeType: "image/png",
@@ -163,4 +178,53 @@ describe("downloading files shared in channel messages", () => {
       ]);
     }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
   });
+
+  it.effect("runs at most four downloads at once across messages", () =>
+    Effect.gen(function* () {
+      const downloads = Semaphore.makeUnsafe(CHANNEL_DOWNLOAD_PERMITS);
+      const release = Promise.withResolvers<void>();
+      const fourStarted = Promise.withResolvers<void>();
+      let started = 0;
+      let inFlight = 0;
+      let mostInFlight = 0;
+
+      const file = (name: string) => ({
+        name,
+        mimeType: "image/png",
+        fetch: async () => {
+          started += 1;
+          inFlight += 1;
+          mostInFlight = Math.max(mostInFlight, inFlight);
+
+          if (started === CHANNEL_DOWNLOAD_PERMITS) fourStarted.resolve();
+          await release.promise;
+          inFlight -= 1;
+
+          return PNG_BYTES;
+        },
+      });
+
+      const first = yield* Effect.forkChild(
+        downloadInboundAttachments(downloads, ["a.png", "b.png", "c.png", "d.png"].map(file)),
+      );
+
+      const second = yield* Effect.forkChild(
+        downloadInboundAttachments(downloads, [file("e.png")]),
+      );
+
+      yield* Effect.promise(() => fourStarted.promise);
+      release.resolve();
+
+      const files = [...(yield* Fiber.join(first)).files, ...(yield* Fiber.join(second)).files];
+
+      expect(files.map((downloaded) => downloaded.name)).toEqual([
+        "a.png",
+        "b.png",
+        "c.png",
+        "d.png",
+        "e.png",
+      ]);
+      expect(mostInFlight).toBe(CHANNEL_DOWNLOAD_PERMITS);
+    }),
+  );
 });

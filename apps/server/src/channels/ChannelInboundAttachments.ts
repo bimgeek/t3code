@@ -13,6 +13,7 @@ import { type Message } from "chat";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Semaphore from "effect/Semaphore";
 import { deterministicAttachmentId } from "../attachmentStore.ts";
 import {
   type ChannelRuntimeContext,
@@ -24,7 +25,8 @@ import {
 
 const ATTACHMENT_NAME_MAX_CHARS = 255;
 
-const DOWNLOAD_CONCURRENCY = 4;
+/** Downloads in flight across every bot and message, for `ChannelRuntimeContext.downloads`. */
+export const CHANNEL_DOWNLOAD_PERMITS = 4;
 
 const DOWNLOAD_TIMEOUT = "30 seconds";
 
@@ -144,11 +146,15 @@ const withinLimit = (plans: ReadonlyArray<Note | Download>) => {
   });
 };
 
-const download = Effect.fn("downloadChannelFile")(function* (planned: Download) {
+const download = Effect.fn("downloadChannelFile")(function* (
+  downloads: Semaphore.Semaphore,
+  planned: Download,
+) {
   const { name } = planned;
 
   const bytes = yield* Effect.tryPromise(planned.fetch).pipe(
     Effect.timeout(DOWNLOAD_TIMEOUT),
+    downloads.withPermits(1),
     Effect.tapError((error) =>
       Effect.logWarning("Failed to download a file shared in a channel message.", {
         name,
@@ -176,13 +182,14 @@ const download = Effect.fn("downloadChannelFile")(function* (planned: Download) 
 });
 
 export const downloadInboundAttachments = Effect.fn("downloadInboundAttachments")(function* (
+  downloads: Semaphore.Semaphore,
   attachments: ReadonlyArray<InboundChannelAttachment>,
 ) {
   const outcomes = yield* Effect.forEach(
     withinLimit(attachments.map(planDownload)),
     (planned): Effect.Effect<Note | { readonly file: DownloadedChannelFile }> =>
-      "note" in planned ? Effect.succeed(planned) : download(planned),
-    { concurrency: DOWNLOAD_CONCURRENCY },
+      "note" in planned ? Effect.succeed(planned) : download(downloads, planned),
+    { concurrency: "unbounded" },
   );
 
   return {

@@ -132,7 +132,7 @@ export const startChannel = (
     // SDK callbacks are the only place work crosses into Effect; each runs in the runtime scope.
     const onInbound: InboundCallback = (message) =>
       ctx.runSdkCallback(
-        downloadInboundAttachments(message.attachments).pipe(
+        downloadInboundAttachments(ctx.downloads, message.attachments).pipe(
           Effect.flatMap((attachments) => dispatch(message, attachments)),
         ),
       );

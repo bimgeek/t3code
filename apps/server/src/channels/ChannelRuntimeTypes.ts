@@ -21,6 +21,7 @@ import * as Effect from "effect/Effect";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import type * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/unstable/http";
 import { type AttachmentToWrite, type AttachmentWriteError } from "../attachmentStore.ts";
@@ -239,6 +240,8 @@ export interface ChannelRuntimeContext {
   readonly runtimes: Map<string, ChannelRuntimeEntry>;
   readonly statuses: WeakMap<ChannelRuntimeEntry, Map<string, ChannelStatus>>;
   readonly withLock: KeyedLock;
+  /** Permits for inbound file downloads, shared by every bot so a burst of files stays bounded. */
+  readonly downloads: Semaphore.Semaphore;
   /** Runs SDK callback work as a fiber of the runtime scope. */
   readonly runSdkCallback: <A, E>(effect: Effect.Effect<A, E>) => Promise<A>;
   /** Parent of every transport's own scope, such as a renewing gateway. */

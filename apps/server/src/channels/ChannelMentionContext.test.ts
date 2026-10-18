@@ -1,9 +1,13 @@
 import { createSlackAdapter, type SlackEvent } from "@chat-adapter/slack";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Semaphore from "effect/Semaphore";
 import { describe, expect } from "vite-plus/test";
 import { CHANNEL_MENTION_CONTEXT_CHARACTER_LIMIT, mentionWithContext } from "./ChannelInbound.ts";
-import { downloadInboundAttachments } from "./ChannelInboundAttachments.ts";
+import {
+  CHANNEL_DOWNLOAD_PERMITS,
+  downloadInboundAttachments,
+} from "./ChannelInboundAttachments.ts";
 
 const PNG_BYTES = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -61,7 +65,10 @@ const mentionOf = (
       ),
     );
 
-    const downloaded = yield* downloadInboundAttachments(inbound.attachments);
+    const downloaded = yield* downloadInboundAttachments(
+      Semaphore.makeUnsafe(CHANNEL_DOWNLOAD_PERMITS),
+      inbound.attachments,
+    );
 
     return {
       text: inbound.text,
