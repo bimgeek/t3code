@@ -71,8 +71,10 @@ const withoutTrailingSlash = (value: string) => value.replace(/\/$/, "");
 
 /**
  * Slack's adapter flattens `message.text` to plain text that keeps only a link's label, so a link
- * labelled `example.com/projects/…` would reach the bot without its target. Adapters that pass raw
- * markdown through (Discord's gateway, Telegram, WhatsApp, iMessage) already carry the target.
+ * labelled `example.com/projects/…` would reach the bot without its target. Discord's history
+ * reads (`parseDiscordMessage`, behind `recentMessages`) flatten the same way. Telegram, WhatsApp,
+ * iMessage, and Discord's live gateway messages, forwarded content included, keep raw markdown,
+ * which already carries the target.
  */
 export function plainTextWithLinks(message: Message): string {
   if (message.text !== toPlainText(message.formatted)) return message.text;
