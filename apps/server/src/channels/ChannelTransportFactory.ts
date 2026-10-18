@@ -84,9 +84,6 @@ export const initializeChannelChat = (chat: Chat) =>
   );
 
 /**
- * Messages with neither text nor files, and anything a bot wrote, including this bot, never
- * start a turn.
- *
  * Discord, Slack, WhatsApp and iMessage always give a person's message a real boolean, so an
  * `"unknown"` author there is treated as a bot. Telegram reports `"unknown"` for messages sent on
  * behalf of a chat (`sender_chat`: anonymous group admins and linked channel posts), which people

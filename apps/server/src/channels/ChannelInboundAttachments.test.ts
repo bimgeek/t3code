@@ -44,7 +44,6 @@ const connectSlack = Effect.gen(function* () {
 
   const downloads: string[] = [];
 
-  // Parses the event with the real Slack adapter and swaps only the network download.
   const deliver = (event: SlackEvent) => {
     const message = slackAdapter.parseMessage(event);
 

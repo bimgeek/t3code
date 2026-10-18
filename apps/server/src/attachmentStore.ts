@@ -105,10 +105,6 @@ export function createAttachmentId(threadId: string): string | null {
   return `${threadSegment}-${NodeCrypto.randomUUID()}`;
 }
 
-/**
- * An id that is the same every time `key` is processed for this thread, so a repeated
- * delivery rewrites one file instead of leaving a copy behind.
- */
 export function deterministicAttachmentId(threadId: string, key: string): string | null {
   const threadSegment = toSafeThreadAttachmentSegment(threadId);
 
@@ -200,7 +196,6 @@ export class AttachmentWriteError extends Schema.TaggedErrorClass<AttachmentWrit
   }
 }
 
-/** Writes already-validated bytes to the attachment store and returns the persisted attachment. */
 export const writeAttachment = Effect.fn("writeAttachment")(function* (input: {
   readonly attachmentsDir: string;
   readonly attachment: AttachmentToWrite;

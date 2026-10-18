@@ -10,7 +10,6 @@ import { type ChannelRuntimeDependencies } from "../ChannelRuntimeTypes.ts";
 
 const attachmentsDirs = new Set<string>();
 
-/** A fresh attachment store path for one harness. Nothing is created until a file is written. */
 export const makeAttachmentsDir = () => {
   const dir = NodePath.join(
     NodeOS.tmpdir(),
@@ -22,13 +21,11 @@ export const makeAttachmentsDir = () => {
   return dir;
 };
 
-/** The production attachment writer, pointed at a test directory. */
 export const attachmentWriterFor =
   (attachmentsDir: string): ChannelRuntimeDependencies["writeAttachment"] =>
   (attachment, bytes) =>
     writeAttachment({ attachmentsDir, attachment, bytes }).pipe(Effect.provide(NodeServices.layer));
 
-/** For harnesses whose tests never share files. */
 export const unusedAttachmentWriter: ChannelRuntimeDependencies["writeAttachment"] = () =>
   Effect.die("unused attachment writer");
 

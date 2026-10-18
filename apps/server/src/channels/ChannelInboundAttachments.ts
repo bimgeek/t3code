@@ -19,7 +19,6 @@ import {
 
 const ATTACHMENT_NAME_MAX_CHARS = 255;
 
-/** Reads the files a platform attached to a message. Downloads stay lazy. */
 export const inboundAttachments = (message: Message): ReadonlyArray<InboundChannelAttachment> =>
   message.attachments.map((attachment) => {
     const fetchData = attachment.fetchData;
@@ -35,7 +34,6 @@ export const inboundAttachments = (message: Message): ReadonlyArray<InboundChann
     };
   });
 
-/** The composer's rules: the same image and file types, with the same size limits. */
 const supportedKind = (mimeType: string) => {
   const normalized = mimeType.toLowerCase();
   const image = PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES.find((type) => type === normalized);
@@ -133,11 +131,6 @@ const persistAttachment = Effect.fn("persistAttachment")(function* (
     : notAttached(name, "it could not be saved");
 });
 
-/**
- * Saves the files shared in one channel message as chat attachments. A file that cannot be
- * attached becomes a note for the bot instead, so a bad file never fails the turn. Ids derive
- * from the message id, so a redelivered message rewrites the same files.
- */
 export const persistInboundAttachments = Effect.fn("persistInboundAttachments")(function* (
   ctx: ChannelRuntimeContext,
   input: {

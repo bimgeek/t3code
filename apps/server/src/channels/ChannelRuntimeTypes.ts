@@ -103,14 +103,11 @@ export interface StartedChannel {
   readonly runtime: ChannelRuntimeEntry;
 }
 
-/** A file shared in a channel message, as the platform reported it. */
 export interface InboundChannelAttachment {
   readonly name: string;
-  /** As reported by the platform. May be empty. */
   readonly mimeType: string;
   readonly sizeBytes?: number;
   readonly url?: string;
-  /** Absent when the platform gives no way to download the file. */
   readonly fetch?: () => Promise<Uint8Array>;
 }
 
@@ -158,7 +155,6 @@ export interface ChannelRuntimeDependencies {
   ) => Effect.Effect<OrchestrationThread | null, ProjectionRepositoryError>;
   readonly nowIso: Effect.Effect<string>;
   readonly randomUuid: Effect.Effect<string, PlatformError.PlatformError>;
-  /** Saves a file shared in a channel message to the attachment store. */
   readonly writeAttachment: (
     attachment: AttachmentToWrite,
     bytes: Uint8Array,
