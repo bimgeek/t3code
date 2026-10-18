@@ -10,7 +10,7 @@ import {
   type ChannelProvider,
   type OrchestrationReadModel,
 } from "@akeru/contracts";
-import { type Message, type Thread } from "chat";
+import { isLinkNode, type Message, text, type Thread, toPlainText, walkAst } from "chat";
 import * as Effect from "effect/Effect";
 import { failWith } from "./ChannelErrors.ts";
 import {
@@ -64,16 +64,44 @@ export const deterministicChannelId = (
     )
     .digest("hex")}`;
 
+/**
+ * The SDK's `message.text` keeps only a link's label, so a Slack link labelled
+ * `example.com/projects/…` would reach the bot without its target.
+ */
+export function plainTextWithLinks(message: Message): string {
+  let addedTarget = false;
+
+  const ast = walkAst(structuredClone(message.formatted), (node) => {
+    if (!isLinkNode(node)) return node;
+    const label = toPlainText({ type: "root", children: node.children }).trim();
+    const bare = node.url.replace(/^(?:https?:\/\/|mailto:)/, "");
+
+    if (!label) {
+      addedTarget = true;
+
+      return text(node.url);
+    }
+
+    if (label === node.url || label === bare || label === bare.replace(/\/$/, ""))
+      return text(label);
+    addedTarget = true;
+
+    return text(`${label} (${node.url})`);
+  });
+
+  return addedTarget ? toPlainText(ast) : message.text;
+}
+
 export const normalizedInboundMessage = (
   thread: Pick<Thread, "id" | "recentMessages" | "refresh">,
   message: Message,
-  text = message.text,
+  messageText = plainTextWithLinks(message),
 ): InboundChannelMessage => ({
   externalThreadId: thread.id,
   externalMessageId: message.id,
   externalSenderId: message.author.userId,
   externalSenderName: message.author.fullName || message.author.userName,
-  text,
+  text: messageText,
 });
 
 export async function mentionWithContext(
@@ -87,9 +115,10 @@ export async function mentionWithContext(
       (candidate) =>
         candidate.id !== message.id &&
         candidate.author.isBot !== true &&
-        candidate.author.isMe !== true &&
-        candidate.text.trim(),
+        candidate.author.isMe !== true,
     )
+    .map((candidate) => ({ author: candidate.author, text: plainTextWithLinks(candidate) }))
+    .filter((candidate) => candidate.text.trim())
     .slice(-CHANNEL_MENTION_CONTEXT_LIMIT)
     .map(
       (candidate) =>
@@ -97,11 +126,12 @@ export async function mentionWithContext(
     );
 
   const boundedContext = context.join("\n").slice(-CHANNEL_MENTION_CONTEXT_CHARACTER_LIMIT);
+  const messageText = plainTextWithLinks(message);
 
   return normalizedInboundMessage(
     thread,
     message,
-    boundedContext.length === 0 ? message.text : `${boundedContext}\n${message.text}`,
+    boundedContext.length === 0 ? messageText : `${boundedContext}\n${messageText}`,
   );
 }
 
