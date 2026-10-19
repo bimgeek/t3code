@@ -4,7 +4,9 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import { describe, expect } from "vite-plus/test";
 
@@ -17,6 +19,7 @@ import {
   resolveAttachmentPathById,
   sweepStalePendingAttachments,
   writeAttachment,
+  writeFileAtomically,
 } from "./attachmentStore.ts";
 
 describe("attachmentStore", () => {
@@ -208,6 +211,38 @@ describe("attachmentStore", () => {
       expect(saved.sizeBytes).toBe(6);
       expect(NodeFS.readdirSync(attachmentsDir)).toEqual([fileName]);
       expect(NodeFS.readFileSync(NodePath.join(attachmentsDir, fileName), "utf8")).toBe("second");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("removes the partial file when a write is interrupted", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const written = yield* Deferred.make<void>();
+
+      const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-attachment-interrupt-",
+      });
+
+      const stalledFileSystem: FileSystem.FileSystem = {
+        ...fileSystem,
+        writeFile: (path, data, options) =>
+          fileSystem
+            .writeFile(path, data, options)
+            .pipe(
+              Effect.andThen(Deferred.succeed(written, undefined)),
+              Effect.andThen(Effect.never),
+            ),
+      };
+
+      const write = yield* writeFileAtomically(
+        NodePath.join(attachmentsDir, "notes.txt"),
+        Buffer.from("partial"),
+      ).pipe(Effect.provideService(FileSystem.FileSystem, stalledFileSystem), Effect.forkChild);
+
+      yield* Deferred.await(written);
+      yield* Fiber.interrupt(write);
+
+      expect(NodeFS.readdirSync(attachmentsDir)).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

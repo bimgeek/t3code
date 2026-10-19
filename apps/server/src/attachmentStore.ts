@@ -196,7 +196,7 @@ export const writeFileAtomically = Effect.fn("writeFileAtomically")(function* (
     yield* fileSystem.makeDirectory(path.dirname(filePath), { recursive: true });
     yield* fileSystem.writeFile(partPath, bytes);
     yield* fileSystem.rename(partPath, filePath);
-  }).pipe(Effect.tapError(() => fileSystem.remove(partPath, { force: true }).pipe(Effect.ignore)));
+  }).pipe(Effect.onError(() => fileSystem.remove(partPath, { force: true }).pipe(Effect.ignore)));
 });
 
 export const writeAttachment = Effect.fn("writeAttachment")(function* (input: {
@@ -206,6 +206,7 @@ export const writeAttachment = Effect.fn("writeAttachment")(function* (input: {
 }) {
   const attachment: ChatAttachment = { ...input.attachment, sizeBytes: input.bytes.byteLength };
   const path = resolveAttachmentPath({ attachmentsDir: input.attachmentsDir, attachment });
+
   const fail = (cause?: unknown) =>
     new AttachmentWriteError({ attachmentId: attachment.id, cause });
 
