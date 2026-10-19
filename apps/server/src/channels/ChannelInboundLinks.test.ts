@@ -1,4 +1,4 @@
-import { DiscordFormatConverter } from "@chat-adapter/discord";
+import { createDiscordAdapter, DiscordFormatConverter } from "@chat-adapter/discord";
 import { createSlackAdapter, type SlackEvent } from "@chat-adapter/slack";
 import { Message } from "chat";
 import { describe, expect, it } from "vite-plus/test";
@@ -21,7 +21,26 @@ const slackMessage = (ts: string, user: string, text: string) =>
     text,
   } satisfies SlackEvent);
 
-const thread = (recentMessages: ReadonlyArray<ReturnType<typeof slackMessage>> = []) => ({
+const discord = createDiscordAdapter({
+  applicationId: "app-test",
+  botToken: "discord-test",
+  publicKey: "0".repeat(64),
+});
+
+const discordHistoryMessage = (id: string, userId: string, content: string) =>
+  discord.parseMessage({
+    id,
+    channel_id: "C1",
+    guild_id: "G1",
+    type: 0,
+    content,
+    timestamp: "2026-01-01T00:00:00.000Z",
+    edited_timestamp: null,
+    attachments: [],
+    author: { id: userId, username: userId, global_name: null },
+  });
+
+const thread = (recentMessages: ReadonlyArray<Message> = []) => ({
   id: "slack:C1:1710000000.000001",
   recentMessages: [...recentMessages],
   refresh: async () => undefined,
@@ -113,6 +132,22 @@ describe("inbound channel message text", () => {
 
     expect(normalized.text).toBe(
       "U1: spec is at docs.example.com/spec/… (https://docs.example.com/spec/v2/final)\n@U0AKERU compare with the old one (https://example.com/old-spec)",
+    );
+  });
+
+  it("keeps link targets in Discord history lines read with a mention", async () => {
+    const earlier = discordHistoryMessage(
+      "discord-history-1",
+      "D1",
+      "spec is at [docs.example.com/spec/…](https://docs.example.com/spec/v2/final)",
+    );
+
+    const current = discordHistoryMessage("discord-history-2", "D2", "<@APP> compare it");
+
+    const normalized = await mentionWithContext(thread([earlier, current]), current);
+
+    expect(normalized.text).toBe(
+      "D1: spec is at docs.example.com/spec/… (https://docs.example.com/spec/v2/final)\n@APP compare it",
     );
   });
 });
