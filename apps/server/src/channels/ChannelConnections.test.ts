@@ -114,6 +114,52 @@ describe("channel runtime", () => {
     }),
   );
 
+  it.effect("keeps a message with a file that arrives while its transport connects", () =>
+    Effect.gen(function* () {
+      let downloads = 0;
+      let early: Promise<void> | undefined;
+
+      const harness = makeHarness({
+        startTransport: async (_input, onDirectMessage) => {
+          early = onDirectMessage({
+            attachments: [
+              {
+                name: "queued.png",
+                mimeType: "image/png",
+                sizeBytes: 4,
+                fetch: async () => {
+                  downloads += 1;
+
+                  return Uint8Array.from([0x89, 0x50, 0x4e, 0x47]);
+                },
+              },
+            ],
+            externalThreadId: "telegram:queued",
+            externalMessageId: "queued-before-connect",
+            text: "Sent while the bot was offline",
+          });
+
+          return {
+            externalIdentity: "@akeru",
+            runtime: { post: async () => undefined, shutdown: async () => undefined },
+          };
+        },
+      });
+
+      yield* connectChannel(harness.dependencies, telegramConnect(BOT_ID));
+      yield* Effect.promise(() => early ?? Promise.resolve());
+
+      expect(
+        harness.commands.flatMap((command) =>
+          command.type === "thread.turn.start"
+            ? [command.message.attachments.map((attachment) => attachment.name)]
+            : [],
+        ),
+      ).toEqual([["queued.png"]]);
+      expect(downloads).toBe(1);
+    }),
+  );
+
   it.effect("ignores callbacks from a disconnected or replaced transport", () =>
     Effect.gen(function* () {
       const callbacks: Array<

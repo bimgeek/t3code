@@ -144,7 +144,8 @@ export const startChannel = (
     const onInbound: InboundCallback = (message) =>
       ctx.runSdkCallback(
         Effect.gen(function* () {
-          if (!(yield* connectedRuntime)) return;
+          // Under the lock, so a message from a transport that is still connecting waits for it.
+          if (!(yield* withChannelOperation(ctx, input.provider)(connectedRuntime))) return;
 
           const attachments = yield* downloadInboundAttachments(
             ctx.inboundDownloadPermits,
