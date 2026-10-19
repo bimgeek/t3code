@@ -112,6 +112,7 @@ export interface InboundChannelAttachment {
   readonly sizeBytes?: number;
   readonly url?: string;
   readonly fetch?: () => Promise<Uint8Array>;
+  readonly sharedInMentionContext?: true;
 }
 
 export type DownloadedChannelFileKind =
@@ -126,6 +127,7 @@ export type DownloadedChannelFileKind =
 
 export interface DownloadedChannelFile {
   readonly name: string;
+  readonly sharedInMentionContext?: true;
   readonly kind: DownloadedChannelFileKind;
   readonly bytes: Uint8Array;
   readonly sha256Hex: string;

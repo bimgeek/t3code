@@ -18,7 +18,7 @@ import * as Fiber from "effect/Fiber";
 import { it } from "@effect/vitest";
 import { describe, expect } from "vite-plus/test";
 import { AttachmentWriteError, resolveAttachmentPathById } from "../attachmentStore.ts";
-import { type InboundDispatchInput } from "./ChannelInbound.ts";
+import { type InboundDispatchInput, mentionWithContext } from "./ChannelInbound.ts";
 import {
   INBOUND_DOWNLOAD_PERMITS,
   downloadInboundAttachments,
@@ -365,6 +365,43 @@ describe("files shared in channel messages", () => {
     }),
   );
 
+  it.effect("keeps a context file's id when a file before it is gone on redelivery", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({});
+
+      const file = (name: string) => ({
+        name,
+        mimeType: "text/plain",
+        fetch: async () => new TextEncoder().encode(name),
+      });
+
+      const mention = {
+        botId: BOT_ID,
+        projectId: PROJECT_ID,
+        provider: "slack" as const,
+        externalThreadId: "slack:C123:1710000000.000050",
+        externalMessageId: "1710000000.000052",
+        text: "@U0AKERU compare these",
+      };
+
+      yield* dispatchShared(harness.dependencies, {
+        ...mention,
+        attachments: [file("mine.txt"), file("deleted.txt"), file("kept.txt")],
+      });
+      yield* dispatchShared(harness.dependencies, {
+        ...mention,
+        attachments: [file("mine.txt"), file("kept.txt")],
+      });
+
+      const [first, second] = turnStarts(harness.commands).map((turn) =>
+        Object.fromEntries(turn.message.attachments.map(({ name, id }) => [name, id])),
+      );
+
+      expect(second).toEqual({ "mine.txt": first?.["mine.txt"], "kept.txt": first?.["kept.txt"] });
+      expect(NodeFS.readdirSync(harness.attachmentsDir)).toHaveLength(3);
+    }),
+  );
+
   it.effect("names a file it could not save and still starts the turn", () =>
     Effect.gen(function* () {
       const harness = makeHarness({});
@@ -465,6 +502,116 @@ describe("files shared in channel messages", () => {
       ).toEqual([
         ["hello", []],
         ["big photo", ["photo.png"]],
+      ]);
+    }),
+  );
+
+  it.effect("passes a screenshot shared before a Slack mention to the bot", () =>
+    Effect.gen(function* () {
+      const { harness, parse, turns } = yield* connectSlack;
+
+      const thread = (event: Partial<SlackEvent>) =>
+        parse({
+          type: "message",
+          channel: "C123",
+          thread_ts: "1710000000.000030",
+          user: "U1",
+          text: "",
+          ...event,
+        });
+
+      const screenshot = thread({ ts: "1710000000.000030", files: [pngFile] });
+
+      const mention = thread({
+        ts: "1710000000.000031",
+        user: "U2",
+        text: "<@U0AKERU> what's wrong here?",
+      });
+
+      const inbound = yield* Effect.promise(() =>
+        mentionWithContext(
+          {
+            id: mention.threadId,
+            recentMessages: [screenshot, mention],
+            refresh: async () => undefined,
+          },
+          mention,
+        ),
+      );
+
+      yield* dispatchShared(harness.dependencies, {
+        ...inbound,
+        botId: BOT_ID,
+        projectId: PROJECT_ID,
+        provider: "slack",
+      });
+
+      const [turn] = turns();
+
+      expect(turn?.message.text).toBe("U1: [shared shot.png]\n@U0AKERU what's wrong here?");
+      expect(turn?.message.attachments.map(({ id: _id, ...rest }) => rest)).toEqual([
+        { type: "image", name: "shot.png", mimeType: "image/png", sizeBytes: 8 },
+      ]);
+      expect(storedBytes(harness.attachmentsDir, turn?.message.attachments[0]?.id ?? "")).toEqual(
+        PNG_BYTES,
+      );
+    }),
+  );
+
+  it.effect("orders a mention's own files before context files, newest context first", () =>
+    Effect.gen(function* () {
+      const { harness, parse, turns } = yield* connectSlack;
+      let ts = 40;
+
+      const thread = (text: string, name?: string) => {
+        ts += 1;
+
+        return parse({
+          type: "message",
+          channel: "C123",
+          ts: `1710000000.0000${ts}`,
+          thread_ts: "1710000000.000040",
+          user: "U1",
+          text,
+          ...(name ? { files: [{ ...pngFile, id: name, name }] } : {}),
+        });
+      };
+
+      const outsideWindow = thread("", "old.png");
+      const chatter = Array.from({ length: 8 }, (_, index) => thread(`note ${index}`));
+      const described = thread("first try", "a.png");
+      const fileOnly = thread("", "b.png");
+      const mention = thread("<@U0AKERU> compare these", "c.png");
+
+      const inbound = yield* Effect.promise(() =>
+        mentionWithContext(
+          {
+            id: mention.threadId,
+            recentMessages: [outsideWindow, ...chatter, described, fileOnly, mention],
+            refresh: async () => undefined,
+          },
+          mention,
+        ),
+      );
+
+      yield* dispatchShared(harness.dependencies, {
+        ...inbound,
+        botId: BOT_ID,
+        projectId: PROJECT_ID,
+        provider: "slack",
+      });
+
+      const [turn] = turns();
+
+      expect(turn?.message.text.split("\n").slice(-3)).toEqual([
+        "U1: first try [shared a.png]",
+        "U1: [shared b.png]",
+        "@U0AKERU compare these",
+      ]);
+      expect(turn?.message.attachments.map((attachment) => attachment.name)).toEqual([
+        "c.png",
+        "b.png",
+        "a.png",
       ]);
     }),
   );

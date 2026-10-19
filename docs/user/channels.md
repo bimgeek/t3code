@@ -94,7 +94,9 @@ Images and files shared in a message reach the bot the same way as files attache
 - Each image or file can be up to 10 MB.
 - Up to 8 images and files per message. A file that Akeru cannot attach because of its type or size does not count toward the 8.
 
-Akeru does not attach a file that breaks these limits, a file it cannot download, or an empty file. The bot still gets a short note that names the file and says why it was not attached, for example `[Shared file "report.zip" was not attached: unsupported type application/zip]`. Some services give Akeru no way to download a file; then the note includes the file's address when the service provides one.
+When you mention the bot in a Slack or Discord thread, images and files shared in the recent messages that come with the mention also reach the bot. A screenshot posted just before "@bot what's wrong here?" reaches the bot with the question. The mention's own files come first, then files from the newest earlier message to the oldest.
+
+Akeru does not attach a file that breaks these limits, a file it cannot download, or an empty file. The bot still gets a short note that names the file and says why it was not attached, for example `[Shared file "report.zip" was not attached: unsupported type application/zip]`. Some services give Akeru no way to download a file; then the note includes the file's address when the service provides one. Files in the earlier messages that come with a mention get no note. The bot still sees each one's name in that earlier message.
 
 ## Delegation
 

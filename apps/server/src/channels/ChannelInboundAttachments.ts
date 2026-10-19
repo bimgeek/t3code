@@ -90,11 +90,12 @@ const supportedKind = (mimeType: string | undefined) => {
 const megabytes = (bytes: number) => `${bytes / 1024 / 1024} MB`;
 
 interface Note {
-  readonly note: string;
+  readonly note: string | null;
 }
 
 interface SharedFile {
   readonly name: string;
+  readonly sharedInMentionContext?: true;
 }
 
 interface Download extends SharedFile {
@@ -105,7 +106,9 @@ interface Download extends SharedFile {
 }
 
 const notAttached = (file: SharedFile, reason: string): Note => ({
-  note: `[Shared file "${file.name}" was not attached: ${reason}]`,
+  note: file.sharedInMentionContext
+    ? null
+    : `[Shared file "${file.name}" was not attached: ${reason}]`,
 });
 
 const tooLarge = (file: SharedFile, maxBytes: number) =>
@@ -113,7 +116,8 @@ const tooLarge = (file: SharedFile, maxBytes: number) =>
 
 const notes = (
   outcomes: ReadonlyArray<Note | { readonly file: unknown } | { readonly attachment: unknown }>,
-) => outcomes.flatMap((outcome) => ("note" in outcome ? [outcome.note] : []));
+) =>
+  outcomes.flatMap((outcome) => ("note" in outcome && outcome.note !== null ? [outcome.note] : []));
 
 const planDownload = (inbound: InboundChannelAttachment): Note | Download => {
   const supported = supportedKind(inbound.mimeType);
@@ -131,6 +135,7 @@ const planDownload = (inbound: InboundChannelAttachment): Note | Download => {
 
   return {
     name: inbound.name,
+    ...(inbound.sharedInMentionContext ? { sharedInMentionContext: true as const } : {}),
     kind: supported.kind,
     maxBytes: supported.maxBytes,
     sizeDeclared: inbound.sizeBytes !== undefined,
@@ -180,6 +185,7 @@ const download = Effect.fn("downloadChannelFile")(function* (
   return {
     file: {
       name,
+      ...(planned.sharedInMentionContext ? { sharedInMentionContext: true as const } : {}),
       kind: planned.kind,
       bytes: bytes.value,
       sha256Hex: NodeCrypto.createHash("sha256").update(bytes.value).digest("hex"),
@@ -204,6 +210,8 @@ export const downloadInboundAttachments = Effect.fn("downloadInboundAttachments"
   } satisfies DownloadedChannelAttachments;
 });
 
+// The key holds the content hash and same-hash occurrence instead of the position, because
+// context files can shift position when a mention is redelivered.
 export const channelFileAttachmentId = (
   threadId: ThreadId,
   messageId: MessageId,
