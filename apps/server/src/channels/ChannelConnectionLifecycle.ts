@@ -73,6 +73,20 @@ export const startChannel = (
     if (!project) return yield* failWith("The selected channel project is unavailable.", "project");
     let runtime: ChannelRuntimeEntry | undefined;
 
+    /** The runtime and model while this transport still owns a connected binding. */
+    const connectedRuntime = Effect.gen(function* () {
+      const current = runtime;
+
+      if (!current || ctx.runtimes.get(runtimeKey(bot.id, input.provider)) !== current) return null;
+      const currentModel = yield* deps.readModel;
+
+      const binding = currentModel.bots
+        .find((candidate) => candidate.id === bot.id)
+        ?.channelBindings.find((candidate) => candidate.provider === input.provider);
+
+      return binding?.status === "connected" ? { current, currentModel } : null;
+    });
+
     const dispatchUnderProviderLock = (
       message: InboundChannelMessage,
       attachments: DownloadedChannelAttachments,
@@ -82,16 +96,10 @@ export const startChannel = (
         input.provider,
       )(
         Effect.gen(function* () {
-          const current = runtime;
+          const connected = yield* connectedRuntime;
 
-          if (!current || ctx.runtimes.get(runtimeKey(bot.id, input.provider)) !== current) return;
-          const currentModel = yield* deps.readModel;
-
-          const binding = currentModel.bots
-            .find((candidate) => candidate.id === bot.id)
-            ?.channelBindings.find((candidate) => candidate.provider === input.provider);
-
-          if (binding?.status !== "connected") return;
+          if (!connected) return;
+          const { current, currentModel } = connected;
           let duplicate = false;
 
           if (message.externalMessageId) {
@@ -135,9 +143,16 @@ export const startChannel = (
     // SDK callbacks are the only place work crosses into Effect; each runs in the runtime scope.
     const onInbound: InboundCallback = (message) =>
       ctx.runSdkCallback(
-        downloadInboundAttachments(ctx.inboundDownloadPermits, message.attachments).pipe(
-          Effect.flatMap((attachments) => dispatchUnderProviderLock(message, attachments)),
-        ),
+        Effect.gen(function* () {
+          if (!(yield* connectedRuntime)) return;
+
+          const attachments = yield* downloadInboundAttachments(
+            ctx.inboundDownloadPermits,
+            message.attachments,
+          );
+
+          yield* dispatchUnderProviderLock(message, attachments);
+        }),
       );
 
     const context: ChannelTransportContext = {
