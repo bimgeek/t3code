@@ -189,13 +189,14 @@ export async function mentionWithContext(
   const recent = thread.recentMessages;
   const mentionIndex = recent.findIndex((candidate) => candidate.id === message.id);
 
-  // `recentMessages` is oldest first. Dates alone can tie: Slack times messages in microseconds.
+  // `recentMessages` is oldest first. Without the mention, only an earlier millisecond proves a
+  // message came first: Slack times messages in microseconds, so a later reply can share one.
   const earlier =
     mentionIndex >= 0
       ? recent.slice(0, mentionIndex)
       : recent.filter(
           (candidate) =>
-            candidate.metadata.dateSent.getTime() <= message.metadata.dateSent.getTime(),
+            candidate.metadata.dateSent.getTime() < message.metadata.dateSent.getTime(),
         );
 
   const context = boundedContext(

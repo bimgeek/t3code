@@ -147,6 +147,21 @@ describe("mention context", () => {
     }),
   );
 
+  it.effect("leaves out a later reply from the mention's millisecond when history lacks it", () =>
+    Effect.gen(function* () {
+      const context = yield* mentionOf(
+        [
+          slackMessage("1710000000.000002", "U1", "before"),
+          slackMessage("1710000000.100400", "U2", "after", "after.png"),
+        ],
+        slackMessage("1710000000.100000", "U3", "<@U0AKERU> what changed?"),
+      );
+
+      expect(context.text).toBe("U1: before\n@U0AKERU what changed?");
+      expect(context.files).toEqual([]);
+    }),
+  );
+
   it.effect("names only the mention's own files that were not attached", () =>
     Effect.gen(function* () {
       const own = Array.from({ length: 9 }, (_, index) => `own-${index + 1}.png`);
