@@ -100,6 +100,7 @@ describe("channel runtime", () => {
       expect(harness.readModel().bots[0]?.channelBindings[0]?.status).toBe("disconnected");
       yield* Effect.promise(async () =>
         callbacks[0]?.({
+          attachments: [],
           externalThreadId: "telegram:retired",
           externalMessageId: "late",
           text: "Late event",
@@ -137,6 +138,7 @@ describe("channel runtime", () => {
       yield* disconnectChannel(harness.dependencies, BOT_ID, "telegram");
 
       const message = {
+        attachments: [],
         externalThreadId: "telegram:retired",
         externalMessageId: "late",
         text: "Late event",

@@ -22,6 +22,7 @@ import {
   type ChannelRuntimeEntry,
   type StartedTransport,
   type StartedChannel,
+  type DownloadedChannelAttachments,
   type InboundChannelMessage,
   type InboundCallback,
   type ChannelTransportContext,
@@ -48,6 +49,7 @@ import {
   clearPersistedChannelStatuses,
 } from "./ChannelDelivery.ts";
 import { replaceBinding, withChannelOperation } from "./ChannelOperations.ts";
+import { downloadInboundAttachments } from "./ChannelInboundAttachments.ts";
 
 export const startChannel = (
   ctx: ChannelRuntimeContext,
@@ -71,7 +73,10 @@ export const startChannel = (
     if (!project) return yield* failWith("The selected channel project is unavailable.", "project");
     let runtime: ChannelRuntimeEntry | undefined;
 
-    const dispatch = (message: InboundChannelMessage) =>
+    const dispatchUnderProviderLock = (
+      message: InboundChannelMessage,
+      attachments: DownloadedChannelAttachments,
+    ) =>
       withChannelOperation(
         ctx,
         input.provider,
@@ -105,6 +110,7 @@ export const startChannel = (
 
           yield* dispatchInboundChannelMessage(ctx, {
             ...message,
+            attachments,
             botId: bot.id,
             projectId: project.id,
             provider: input.provider,
@@ -127,7 +133,12 @@ export const startChannel = (
       );
 
     // SDK callbacks are the only place work crosses into Effect; each runs in the runtime scope.
-    const onInbound: InboundCallback = (message) => ctx.runSdkCallback(dispatch(message));
+    const onInbound: InboundCallback = (message) =>
+      ctx.runSdkCallback(
+        downloadInboundAttachments(ctx.inboundDownloadPermits, message.attachments).pipe(
+          Effect.flatMap((attachments) => dispatchUnderProviderLock(message, attachments)),
+        ),
+      );
 
     const context: ChannelTransportContext = {
       botName: bot.name,
