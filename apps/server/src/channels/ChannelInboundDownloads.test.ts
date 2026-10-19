@@ -155,11 +155,17 @@ describe("downloading files shared in channel messages", () => {
           {
             name: "denied.png",
             mimeType: "image/png",
+            sizeBytes: 8,
             fetch: async () => {
               throw new Error("GET https://files.slack.com/F1?token=xoxb-secret returned 403");
             },
           },
-          { name: "stalled.png", mimeType: "image/png", fetch: () => new Promise(() => {}) },
+          {
+            name: "stalled.png",
+            mimeType: "image/png",
+            sizeBytes: 8,
+            fetch: () => new Promise(() => {}),
+          },
         ]),
       );
 
@@ -191,6 +197,7 @@ describe("downloading files shared in channel messages", () => {
       const file = (name: string) => ({
         name,
         mimeType: "image/png",
+        sizeBytes: PNG_BYTES.byteLength,
         fetch: async () => {
           started += 1;
           inFlight += 1;
@@ -225,6 +232,58 @@ describe("downloading files shared in channel messages", () => {
         "e.png",
       ]);
       expect(mostInFlight).toBe(INBOUND_DOWNLOAD_PERMITS);
+    }),
+  );
+
+  it.effect("runs a download with no declared size alone", () =>
+    Effect.gen(function* () {
+      const downloads = Semaphore.makeUnsafe(INBOUND_DOWNLOAD_PERMITS);
+      const release = Promise.withResolvers<void>();
+      const twoStarted = Promise.withResolvers<void>();
+      let inFlight = 0;
+      let inFlightBesideUnsized: number | null = null;
+
+      const sized = (name: string) => ({
+        name,
+        mimeType: "image/png",
+        sizeBytes: PNG_BYTES.byteLength,
+        fetch: async () => {
+          inFlight += 1;
+
+          if (inFlight === 2) twoStarted.resolve();
+          await release.promise;
+          inFlight -= 1;
+
+          return PNG_BYTES;
+        },
+      });
+
+      const unsized = {
+        name: "voice-note.png",
+        mimeType: "image/png",
+        fetch: async () => {
+          inFlightBesideUnsized = inFlight;
+
+          return PNG_BYTES;
+        },
+      };
+
+      const sizedMessage = yield* Effect.forkChild(
+        downloadInboundAttachments(downloads, [sized("a.png"), sized("b.png")]),
+      );
+
+      const unsizedMessage = yield* Effect.forkChild(
+        downloadInboundAttachments(downloads, [unsized]),
+      );
+
+      yield* Effect.promise(() => twoStarted.promise);
+      release.resolve();
+      yield* Fiber.join(sizedMessage);
+
+      expect((yield* Fiber.join(unsizedMessage)).files.map((file) => file.name)).toEqual([
+        "voice-note.png",
+      ]);
+      expect(inFlightBesideUnsized).toBe(0);
     }),
   );
 });

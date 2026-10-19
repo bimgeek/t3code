@@ -100,6 +100,7 @@ interface SharedFile {
 interface Download extends SharedFile {
   readonly kind: DownloadedChannelFileKind;
   readonly maxBytes: number;
+  readonly sizeDeclared: boolean;
   readonly fetch: () => Promise<Uint8Array>;
 }
 
@@ -132,6 +133,7 @@ const planDownload = (inbound: InboundChannelAttachment): Note | Download => {
     name: inbound.name,
     kind: supported.kind,
     maxBytes: supported.maxBytes,
+    sizeDeclared: inbound.sizeBytes !== undefined,
     fetch: inbound.fetch,
   };
 };
@@ -157,7 +159,9 @@ const download = Effect.fn("downloadChannelFile")(function* (
 
   const bytes = yield* Effect.tryPromise(planned.fetch).pipe(
     Effect.timeout(DOWNLOAD_TIMEOUT),
-    downloads.withPermits(1),
+    // The SDK buffers a whole file before its size is known, so a file with no declared size
+    // (WhatsApp sends none) holds every permit and buffers alone.
+    downloads.withPermits(planned.sizeDeclared ? 1 : INBOUND_DOWNLOAD_PERMITS),
     Effect.tapError((error) =>
       Effect.logWarning("Failed to download a file shared in a channel message.", {
         name,
