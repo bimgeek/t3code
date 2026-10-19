@@ -8,6 +8,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as PlatformError from "effect/PlatformError";
 import { describe, expect } from "vite-plus/test";
 
 import {
@@ -211,6 +212,58 @@ describe("attachmentStore", () => {
       expect(saved.sizeBytes).toBe(6);
       expect(NodeFS.readdirSync(attachmentsDir)).toEqual([fileName]);
       expect(NodeFS.readFileSync(NodePath.join(attachmentsDir, fileName), "utf8")).toBe("second");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps the previous attachment when a rewrite fails part way", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const fileName = "thread-1-00000000-0000-4000-8000-000000000004.txt";
+
+      const failure = (method: string) =>
+        PlatformError.systemError({ _tag: "Unknown", module: "FileSystem", method });
+
+      const failingFileSystems: ReadonlyArray<FileSystem.FileSystem> = [
+        {
+          ...fileSystem,
+          writeFile: (path, data) =>
+            fileSystem
+              .writeFile(path, data.subarray(0, 3))
+              .pipe(Effect.andThen(Effect.fail(failure("writeFile")))),
+        },
+        { ...fileSystem, rename: () => Effect.fail(failure("rename")) },
+      ];
+
+      for (const failingFileSystem of failingFileSystems) {
+        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-attachment-failed-rewrite-",
+        });
+
+        const write = (bytes: Uint8Array) =>
+          writeAttachment({
+            attachmentsDir,
+            attachment: {
+              type: "file",
+              id: "thread-1-00000000-0000-4000-8000-000000000004",
+              name: "notes.txt",
+              mimeType: "text/plain",
+            },
+            bytes,
+          });
+
+        yield* write(Buffer.from("first version"));
+
+        const failed = yield* write(Buffer.from("second version")).pipe(
+          Effect.provideService(FileSystem.FileSystem, failingFileSystem),
+          Effect.flip,
+        );
+
+        expect(failed._tag).toBe("AttachmentWriteError");
+        expect(NodeFS.readdirSync(attachmentsDir)).toEqual([fileName]);
+        expect(NodeFS.readFileSync(NodePath.join(attachmentsDir, fileName), "utf8")).toBe(
+          "first version",
+        );
+      }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
