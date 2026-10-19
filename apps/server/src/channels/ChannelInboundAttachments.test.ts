@@ -305,6 +305,25 @@ describe("files shared in channel messages", () => {
     }),
   );
 
+  it.effect("caps a shared file's name at 255 UTF-16 units without splitting an emoji", () =>
+    Effect.gen(function* () {
+      const { deliver, turns } = yield* connectSlack;
+
+      yield* deliver({
+        type: "message",
+        channel: "D123",
+        ts: "1710000000.000011",
+        user: "U1",
+        text: "look",
+        files: [{ ...pngFile, name: `${"🙂".repeat(200)}.png` }],
+      });
+
+      expect(turns()[0]?.message.attachments.map((attachment) => attachment.name)).toEqual([
+        "🙂".repeat(127),
+      ]);
+    }),
+  );
+
   it.effect("stores each shared file under its own id", () =>
     Effect.gen(function* () {
       const harness = makeHarness({});

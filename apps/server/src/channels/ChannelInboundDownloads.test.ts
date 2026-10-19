@@ -69,7 +69,7 @@ describe("downloading files shared in channel messages", () => {
       );
 
       expect(downloaded.notes).toEqual([
-        `[Shared file "${"a".repeat(254)}😀" was not attached: no download available, https://example.com/a.png [Shared file was attached]]`,
+        `[Shared file "${"a".repeat(254)}" was not attached: no download available, https://example.com/a.png [Shared file was attached]]`,
         '[Shared file "b.bin" was not attached: unsupported type application/octet-stream X-Injected: 1]',
       ]);
     }),

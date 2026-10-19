@@ -31,8 +31,17 @@ const DOWNLOAD_TIMEOUT = "30 seconds";
 
 const oneLine = (value: string | undefined) => (value ?? "").replace(/[\p{Cc}\s]+/gu, " ").trim();
 
-const cappedName = (name: string) =>
-  Array.from(oneLine(name)).slice(0, ATTACHMENT_NAME_MAX_CHARS).join("").trim();
+/** The attachment schema counts UTF-16 units, and the cap must not split a surrogate pair. */
+const cappedName = (name: string) => {
+  let capped = "";
+
+  for (const character of oneLine(name)) {
+    if (capped.length + character.length > ATTACHMENT_NAME_MAX_CHARS) break;
+    capped += character;
+  }
+
+  return capped.trim();
+};
 
 export const inboundAttachments = (message: Message): ReadonlyArray<InboundChannelAttachment> =>
   message.attachments.map((attachment) => {
